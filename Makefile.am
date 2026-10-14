@@ -13,9 +13,9 @@ EXTRA_DIST		= autogen.sh README.md README.txt LICENSE.txt \
 
 SUBDIRS = compat
 
-bin_PROGRAMS = ccminer
+bin_PROGRAMS = megaminer
 
-ccminer_SOURCES	= elist.h miner.h compat.h \
+megaminer_SOURCES	= elist.h miner.h compat.h \
 			  compat/inttypes.h compat/stdbool.h compat/unistd.h \
 			  compat/sys/time.h compat/getopt/getopt.h \
 			  crc32.c hefty1.c \
@@ -82,7 +82,7 @@ ccminer_SOURCES	= elist.h miner.h compat.h \
 			  x11/c11.cu x11/s3.cu x11/sib.cu x11/veltor.cu x11/cuda_streebog.cu
 
 # scrypt
-ccminer_SOURCES += scrypt.cpp scrypt-jane.cpp \
+megaminer_SOURCES += scrypt.cpp scrypt-jane.cpp \
     scrypt/blake.cu scrypt/keccak.cu scrypt/sha256.cu \
     scrypt/salsa_kernel.cu scrypt/test_kernel.cu \
     scrypt/fermi_kernel.cu scrypt/kepler_kernel.cu \
@@ -94,30 +94,31 @@ nvml_libs = -ldl
 endif
 
 if HAVE_WINDOWS
-ccminer_SOURCES += compat/winansi.c
+megaminer_SOURCES += compat/winansi.c
 endif
 
-ccminer_LDFLAGS  = $(PTHREAD_FLAGS) @CUDA_LDFLAGS@
-ccminer_LDADD    = @LIBCURL@ @JANSSON_LIBS@ @PTHREAD_LIBS@ @WS2_LIBS@ @CUDA_LIBS@ @OPENMP_CFLAGS@ @LIBS@ $(nvml_libs)
-ccminer_CPPFLAGS = @LIBCURL_CPPFLAGS@ @OPENMP_CFLAGS@ $(CPPFLAGS) $(PTHREAD_FLAGS) -fno-strict-aliasing $(JANSSON_INCLUDES) $(DEF_INCLUDES) $(nvml_defs)
+megaminer_LDFLAGS  = $(PTHREAD_FLAGS) @CUDA_LDFLAGS@
+megaminer_LDADD    = @LIBCURL@ @JANSSON_LIBS@ @PTHREAD_LIBS@ @WS2_LIBS@ @CUDA_LIBS@ @OPENMP_CFLAGS@ @LIBS@ $(nvml_libs)
+megaminer_CPPFLAGS = @LIBCURL_CPPFLAGS@ @OPENMP_CFLAGS@ $(CPPFLAGS) $(PTHREAD_FLAGS) -fno-strict-aliasing $(JANSSON_INCLUDES) $(DEF_INCLUDES) $(nvml_defs)
 
 if HAVE_OSX
-ccminer_CPPFLAGS += -I/usr/local/llvm/lib/clang/4.0.0/include
-ccminer_LDFLAGS += -L/usr/local/llvm/lib
-ccminer_LDADD += -lomp
+megaminer_CPPFLAGS += -I/usr/local/llvm/lib/clang/4.0.0/include
+megaminer_LDFLAGS += -L/usr/local/llvm/lib
+megaminer_LDADD += -lomp
 endif
 
-#ccminer_CPPFLAGS += -DUSE_LIBSODIUM
-#ccminer_LDFLAGS += -Lequi/lib
-#ccminer_LDADD += -lsodium
-ccminer_LDADD += -lcuda
+#megaminer_CPPFLAGS += -DUSE_LIBSODIUM
+#megaminer_LDFLAGS += -Lequi/lib
+#megaminer_LDADD += -lsodium
+megaminer_LDADD += -lcuda
 
 nvcc_ARCH :=
-nvcc_ARCH += -gencode=arch=compute_61,code=\"sm_61,compute_61\"
-nvcc_ARCH += -gencode=arch=compute_52,code=\"sm_52,compute_52\"
-nvcc_ARCH += -gencode=arch=compute_50,code=\"sm_50,compute_50\"
-#nvcc_ARCH += -gencode=arch=compute_35,code=\"sm_35,compute_35\"
-#nvcc_ARCH += -gencode=arch=compute_30,code=\"sm_30,compute_30\"
+# Target architectures: RTX 2000 (sm_75), RTX 3000 (sm_86), RTX 4000 (sm_89), RTX 5000 (sm_120)
+# Legacy architectures (< sm_75) dropped permanently.
+nvcc_ARCH += -gencode=arch=compute_120,code=\"sm_120,compute_120\"
+nvcc_ARCH += -gencode=arch=compute_89,code=\"sm_89,compute_89\"
+nvcc_ARCH += -gencode=arch=compute_86,code=\"sm_86,compute_86\"
+nvcc_ARCH += -gencode=arch=compute_75,code=\"sm_75,compute_75\"
 
 nvcc_FLAGS = $(nvcc_ARCH) @CUDA_INCLUDES@ -I. @CUDA_CFLAGS@
 nvcc_FLAGS += $(JANSSON_INCLUDES) --ptxas-options="-v"
@@ -175,26 +176,24 @@ quark/cuda_quark_compactionTest.o: quark/cuda_quark_compactionTest.cu
 JHA/cuda_jha_compactionTest.o: JHA/cuda_jha_compactionTest.cu
 	$(NVCC) $(nvcc_FLAGS) --maxrregcount=80 -o $@ -c $<
 
-# This object does not use cuda device code but call the different kernels (autotune)
+# Scrypt kernels updated to use nvcc_FLAGS (sm_75, sm_86, sm_89, sm_120)
 scrypt/salsa_kernel.o: scrypt/salsa_kernel.cu
-	$(NVCC) $(JANSSON_INCLUDES) -I. @CUDA_INCLUDES@ @CUDA_CFLAGS@ -gencode=arch=compute_30,code=\"sm_30,compute_30\" -o $@ -c $<
-
-# These kernels are for older devices (SM)
+	$(NVCC) $(nvcc_FLAGS) -o $@ -c $<
 
 scrypt/test_kernel.o: scrypt/test_kernel.cu
-	$(NVCC) $(JANSSON_INCLUDES) -I. @CUDA_INCLUDES@ @CUDA_CFLAGS@ -gencode=arch=compute_30,code=\"sm_30,compute_30\" -o $@ -c $<
+	$(NVCC) $(nvcc_FLAGS) -o $@ -c $<
 
 scrypt/fermi_kernel.o: scrypt/fermi_kernel.cu
-	$(NVCC) $(JANSSON_INCLUDES) -I. @CUDA_INCLUDES@ @CUDA_CFLAGS@ -gencode=arch=compute_30,code=\"sm_30,compute_30\" -o $@ -c $<
+	$(NVCC) $(nvcc_FLAGS) -o $@ -c $<
 
 scrypt/kepler_kernel.o: scrypt/kepler_kernel.cu
-	$(NVCC) $(JANSSON_INCLUDES) -I. @CUDA_INCLUDES@ @CUDA_CFLAGS@ -gencode=arch=compute_30,code=\"sm_30,compute_30\" -o $@ -c $<
+	$(NVCC) $(nvcc_FLAGS) -o $@ -c $<
 
 scrypt/nv_kernel.o: scrypt/nv_kernel.cu
-	$(NVCC) $(JANSSON_INCLUDES) -I. @CUDA_INCLUDES@ @CUDA_CFLAGS@ -gencode=arch=compute_30,code=\"sm_30,compute_30\" -o $@ -c $<
+	$(NVCC) $(nvcc_FLAGS) -o $@ -c $<
 
 scrypt/titan_kernel.o: scrypt/titan_kernel.cu
-	$(NVCC) $(nvcc_FLAGS) -gencode=arch=compute_35,code=\"sm_35,compute_35\" -o $@ -c $<
+	$(NVCC) $(nvcc_FLAGS) -o $@ -c $<
 
 skein.o: skein.cu
 	$(NVCC) $(nvcc_FLAGS) --maxrregcount=64 -o $@ -c $<

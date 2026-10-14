@@ -1,5 +1,8 @@
 
 ccminer
+megaminer
+.atl/
+.opencode/
 *.o
 
 autom4te.cache

@@ -1,4 +1,4 @@
-AC_INIT([ccminer], [2.2.4.1-x16r], [], [ccminer], [http://github.com/todd1251/ccminer-x16r])
+AC_INIT([megaminer], [0.1.0-alpha], [], [megaminer], [https://github.com/soptech/megaminer])
 
 AC_PREREQ([2.59c])
 AC_CANONICAL_SYSTEM
