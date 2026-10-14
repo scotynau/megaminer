@@ -9,7 +9,9 @@
 // globaler Speicher für alle HeftyHashes aller Threads
 extern uint32_t *heavy_heftyHashes[MAX_GPUS];
 extern uint32_t *heavy_nonceVector[MAX_GPUS];
+#if CUDA_VERSION < 12000
 static unsigned int *d_textures[MAX_GPUS][8];
+#endif
 
 // globaler Speicher für unsere Ergebnisse
 uint32_t *d_hash4output[MAX_GPUS];
