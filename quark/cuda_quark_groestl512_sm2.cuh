@@ -1,5 +1,13 @@
 // SM 2.x variant (tpruvot)
 
+#if CUDA_VERSION >= 12000
+
+static inline __host__ void quark_groestl512_sm20_init(int thr_id, uint32_t threads) {}
+static inline __host__ void quark_groestl512_sm20_free(int thr_id) {}
+static inline __host__ void quark_groestl512_sm20_hash_64(int thr_id, uint32_t threads, uint32_t startNounce, uint32_t *d_nonceVector, uint32_t *d_hash, int order) {}
+
+#else
+
 #ifdef __INTELLISENSE__
 //#define __CUDA_ARCH__ 210
 #define __CUDACC__
@@ -359,3 +367,5 @@ void groestl512_gpu_hash_80_sm2(const uint32_t threads, const uint32_t startNoun
 }
 
 #endif // WANT_GROESTL80
+
+#endif // CUDA_VERSION < 12000
