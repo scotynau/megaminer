@@ -2002,7 +2002,11 @@ __host__ eq_cuda_context<RB, SM, SSM, THREADS, PACKER>::eq_cuda_context(int thr_
 		checkCudaDriverErrors(_cuCtxPushCurrent(pctx));
 #else
 		checkCudaDriverErrors(cuDeviceGet(&dev, device_id));
-		checkCudaDriverErrors(cuCtxCreate_v2(&pctx, CU_CTX_SCHED_BLOCKING_SYNC, dev));
+#if CUDA_VERSION >= 12000
+		checkCudaDriverErrors(cuCtxCreate(&pctx, nullptr, dev));
+#else
+		checkCudaDriverErrors(cuCtxCreate(&pctx, CU_CTX_SCHED_BLOCKING_SYNC, dev));
+#endif
 		checkCudaDriverErrors(cuCtxPushCurrent(pctx));
 #endif
 	}
