@@ -32,23 +32,23 @@ __constant__ uint32_t groestl_gpu_msg[32];
                     | ((SPH_C32(x) <<  8) & SPH_C32(0x00FF0000)) \
                     | ((SPH_C32(x) << 24) & SPH_C32(0xFF000000)))
 
-#define T0up(x) tex1Dfetch(t0up, x)
-#define T0dn(x) tex1Dfetch(t0dn, x)
-#define T1up(x) tex1Dfetch(t1up, x)
-#define T1dn(x) tex1Dfetch(t1dn, x)
-#define T2up(x) tex1Dfetch(t2up, x)
-#define T2dn(x) tex1Dfetch(t2dn, x)
-#define T3up(x) tex1Dfetch(t3up, x)
-#define T3dn(x) tex1Dfetch(t3dn, x)
+__constant__ uint32_t c_t0up[256];
+__constant__ uint32_t c_t0dn[256];
+__constant__ uint32_t c_t1up[256];
+__constant__ uint32_t c_t1dn[256];
+__constant__ uint32_t c_t2up[256];
+__constant__ uint32_t c_t2dn[256];
+__constant__ uint32_t c_t3up[256];
+__constant__ uint32_t c_t3dn[256];
 
-texture<unsigned int, 1, cudaReadModeElementType> t0up;
-texture<unsigned int, 1, cudaReadModeElementType> t0dn;
-texture<unsigned int, 1, cudaReadModeElementType> t1up;
-texture<unsigned int, 1, cudaReadModeElementType> t1dn;
-texture<unsigned int, 1, cudaReadModeElementType> t2up;
-texture<unsigned int, 1, cudaReadModeElementType> t2dn;
-texture<unsigned int, 1, cudaReadModeElementType> t3up;
-texture<unsigned int, 1, cudaReadModeElementType> t3dn;
+#define T0up(x) c_t0up[x]
+#define T0dn(x) c_t0dn[x]
+#define T1up(x) c_t1up[x]
+#define T1dn(x) c_t1dn[x]
+#define T2up(x) c_t2up[x]
+#define T2dn(x) c_t2dn[x]
+#define T3up(x) c_t3up[x]
+#define T3dn(x) c_t3dn[x]
 
 uint32_t T0up_cpu[] = {
 	C32e(0xc632f4a5), C32e(0xf86f9784), C32e(0xee5eb099), C32e(0xf67a8c8d),
@@ -731,32 +731,20 @@ template <int BLOCKSIZE> __global__ void groestl512_gpu_hash(uint32_t threads, u
 	}
 }
 
-#define texDef(id, texname, texmem, texsource, texsize) { \
-	unsigned int *texmem; \
-	cudaMalloc(&texmem, texsize); \
-	d_textures[thr_id][id] = texmem; \
-	cudaMemcpy(texmem, texsource, texsize, cudaMemcpyHostToDevice); \
-	texname.normalized = 0; \
-	texname.filterMode = cudaFilterModePoint; \
-	texname.addressMode[0] = cudaAddressModeClamp; \
-	{ cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<unsigned int>(); \
-	  cudaBindTexture(NULL, &texname, texmem, &channelDesc, texsize ); \
-	} \
-}
-
 // Setup Function
 __host__
 void groestl512_cpu_init(int thr_id, uint32_t threads)
 {
-	// Texturen mit obigem Makro initialisieren
-	texDef(0, t0up, d_T0up, T0up_cpu, sizeof(uint32_t)*256);
-	texDef(1, t0dn, d_T0dn, T0dn_cpu, sizeof(uint32_t)*256);
-	texDef(2, t1up, d_T1up, T1up_cpu, sizeof(uint32_t)*256);
-	texDef(3, t1dn, d_T1dn, T1dn_cpu, sizeof(uint32_t)*256);
-	texDef(4, t2up, d_T2up, T2up_cpu, sizeof(uint32_t)*256);
-	texDef(5, t2dn, d_T2dn, T2dn_cpu, sizeof(uint32_t)*256);
-	texDef(6, t3up, d_T3up, T3up_cpu, sizeof(uint32_t)*256);
-	texDef(7, t3dn, d_T3dn, T3dn_cpu, sizeof(uint32_t)*256);
+	if (thr_id == 0) {
+		cudaMemcpyToSymbol(c_t0up, T0up_cpu, sizeof(T0up_cpu));
+		cudaMemcpyToSymbol(c_t0dn, T0dn_cpu, sizeof(T0dn_cpu));
+		cudaMemcpyToSymbol(c_t1up, T1up_cpu, sizeof(T1up_cpu));
+		cudaMemcpyToSymbol(c_t1dn, T1dn_cpu, sizeof(T1dn_cpu));
+		cudaMemcpyToSymbol(c_t2up, T2up_cpu, sizeof(T2up_cpu));
+		cudaMemcpyToSymbol(c_t2dn, T2dn_cpu, sizeof(T2dn_cpu));
+		cudaMemcpyToSymbol(c_t3up, T3up_cpu, sizeof(T3up_cpu));
+		cudaMemcpyToSymbol(c_t3dn, T3dn_cpu, sizeof(T3dn_cpu));
+	}
 
 	// Speicher für alle Ergebnisse belegen
 	cudaMalloc(&d_hash4output[thr_id], (size_t) 64 * threads);
@@ -765,9 +753,6 @@ void groestl512_cpu_init(int thr_id, uint32_t threads)
 __host__
 void groestl512_cpu_free(int thr_id)
 {
-	for (int i=0; i <8; i++)
-		cudaFree(d_textures[thr_id][i]);
-
 	cudaFree(d_hash4output[thr_id]);
 }
 
