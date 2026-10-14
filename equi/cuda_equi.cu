@@ -1999,7 +1999,7 @@ __host__ eq_cuda_context<RB, SM, SSM, THREADS, PACKER>::eq_cuda_context(int thr_
 		checkCudaDriverErrors(_cuCtxPushCurrent(pctx));
 #else
 		checkCudaDriverErrors(cuDeviceGet(&dev, device_id));
-		checkCudaDriverErrors(cuCtxCreate(&pctx, CU_CTX_SCHED_BLOCKING_SYNC, dev));
+		checkCudaDriverErrors(cuCtxCreate_v2(&pctx, CU_CTX_SCHED_BLOCKING_SYNC, dev));
 		checkCudaDriverErrors(cuCtxPushCurrent(pctx));
 #endif
 	}

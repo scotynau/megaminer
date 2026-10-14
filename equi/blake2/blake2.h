@@ -59,6 +59,7 @@ extern "C" {
     uint16_t counter;
     uint8_t  buflen;
     uint8_t  lastblock;
+    uint8_t  padding[60];
   } blake2b_state;
 
 #pragma pack(pop)

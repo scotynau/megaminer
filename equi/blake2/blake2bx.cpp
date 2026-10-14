@@ -241,7 +241,8 @@ int eq_blake2b_final(blake2b_state *S, uint8_t *out, uint8_t outlen)
 
 int eq_blake2b(uint8_t *out, const void *in, const void *key, const uint8_t outlen, const uint64_t inlen, uint8_t keylen)
 {
-	blake2b_state S[1];
+	blake2b_state S_st;
+	blake2b_state *S = &S_st;
 
 	/* Verify parameters */
 	if (!in || !out) return -1;
