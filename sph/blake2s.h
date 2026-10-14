@@ -120,6 +120,7 @@ ALIGN( 64 ) typedef struct __blake2s_state
 	uint8_t  buf[2 * BLAKE2S_BLOCKBYTES];
 	size_t   buflen;
 	uint8_t  last_node;
+	uint8_t  padding[71];
 } blake2s_state;
 #pragma pack(pop)
 

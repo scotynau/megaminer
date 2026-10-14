@@ -24,6 +24,7 @@ ALIGN(64) typedef struct {
 	uint64_t t[2];  // total number of bytes
 	size_t c;       // pointer for b[]
 	size_t outlen;  // digest size
+	uint8_t padding[32];
 } blake2b_ctx;
 
 #if defined(__cplusplus)
