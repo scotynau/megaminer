@@ -5,6 +5,7 @@
 static inline __host__ void quark_groestl512_sm20_init(int thr_id, uint32_t threads) {}
 static inline __host__ void quark_groestl512_sm20_free(int thr_id) {}
 static inline __host__ void quark_groestl512_sm20_hash_64(int thr_id, uint32_t threads, uint32_t startNounce, uint32_t *d_nonceVector, uint32_t *d_hash, int order) {}
+__global__ static void groestl512_gpu_hash_80_sm2(const uint32_t threads, const uint32_t startNounce, uint32_t *d_hash) {}
 
 #else
 
