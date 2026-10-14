@@ -112,13 +112,7 @@ endif
 #megaminer_LDADD += -lsodium
 megaminer_LDADD += -lcuda
 
-nvcc_ARCH :=
-# Target architectures: RTX 2000 (sm_75), RTX 3000 (sm_86), RTX 4000 (sm_89), RTX 5000 (sm_120)
-# Legacy architectures (< sm_75) dropped permanently.
-nvcc_ARCH += -gencode=arch=compute_120,code=\"sm_120,compute_120\"
-nvcc_ARCH += -gencode=arch=compute_89,code=\"sm_89,compute_89\"
-nvcc_ARCH += -gencode=arch=compute_86,code=\"sm_86,compute_86\"
-nvcc_ARCH += -gencode=arch=compute_75,code=\"sm_75,compute_75\"
+nvcc_ARCH := @NVCC_GENCODES@
 
 nvcc_FLAGS = $(nvcc_ARCH) @CUDA_INCLUDES@ -I. @CUDA_CFLAGS@
 nvcc_FLAGS += $(JANSSON_INCLUDES) --ptxas-options="-v"

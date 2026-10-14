@@ -151,6 +151,24 @@ if test -n "$with_nvml" ; then
 fi
 AC_SUBST(NVML_LIBPATH)
 
+dnl Auto-detect supported CUDA GPU architectures
+AC_MSG_CHECKING([supported CUDA architectures])
+NVCC_GENCODES=""
+cat << 'EOF' > conftest_cuda.cu
+__global__ void test_kernel() {}
+EOF
+for arch in 120 89 86 75; do
+  if $NVCC $CUDA_INCLUDES -gencode=arch=compute_$arch,code=sm_$arch -c conftest_cuda.cu -o conftest_cuda.o >/dev/null 2>&1; then
+    NVCC_GENCODES="$NVCC_GENCODES -gencode=arch=compute_$arch,code=\\\"sm_$arch,compute_$arch\\\""
+  fi
+done
+rm -f conftest_cuda.cu conftest_cuda.o
+if test -z "$NVCC_GENCODES"; then
+  NVCC_GENCODES="-gencode=arch=compute_75,code=\\\"sm_75,compute_75\\\""
+fi
+AC_MSG_RESULT([$NVCC_GENCODES])
+AC_SUBST(NVCC_GENCODES)
+
 AC_SUBST(CUDA_CFLAGS)
 AC_SUBST(CUDA_INCLUDES)
 AC_SUBST(CUDA_LIBS)
