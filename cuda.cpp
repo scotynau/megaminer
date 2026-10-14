@@ -35,9 +35,9 @@ int cuda_num_devices()
 	}
 
 	if (version < CUDART_VERSION) {
-		applog(LOG_ERR, "Your system does not support CUDA %d.%d API!",
+		applog(LOG_WARNING, "CUDA driver version (%d.%d) is lower than compiled CUDART (%d.%d)",
+			version / 1000, (version % 1000) / 10,
 			CUDART_VERSION / 1000, (CUDART_VERSION % 1000) / 10);
-		exit(1);
 	}
 
 	err = cudaGetDeviceCount(&GPU_N);
