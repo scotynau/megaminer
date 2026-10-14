@@ -44,8 +44,10 @@ __constant__ uint32_t c_SCRATCH_WU_PER_WARP;   // (SCRATCH * WU_PER_WARP)
 __constant__ uint32_t c_SCRATCH_WU_PER_WARP_1; // (SCRATCH * WU_PER_WARP) - 1
 
 // using texture references for the "tex" variants of the B kernels
+#if CUDA_VERSION < 12000
 texture<uint4, 1, cudaReadModeElementType> texRef1D_4_V;
 texture<uint4, 2, cudaReadModeElementType> texRef2D_4_V;
+#endif
 
 template <int ALGO> __device__  __forceinline__ void block_mixer(uint4 &b, uint4 &bx, const int x1, const int x2, const int x3);
 

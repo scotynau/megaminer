@@ -36,8 +36,10 @@ template <int ALGO, int TEX_DIM> __global__ void fermi_scrypt_core_kernelB_LG_te
 __constant__ uint32_t* c_V[TOTAL_WARP_LIMIT];
 
 // using texture references for the "tex" variants of the B kernels
+#if CUDA_VERSION < 12000
 texture<uint4, 1, cudaReadModeElementType> texRef1D_4_V;
 texture<uint4, 2, cudaReadModeElementType> texRef2D_4_V;
+#endif
 
 FermiKernel::FermiKernel() : KernelInterface()
 {
@@ -45,16 +47,19 @@ FermiKernel::FermiKernel() : KernelInterface()
 
 bool FermiKernel::bindtexture_1D(uint32_t *d_V, size_t size)
 {
+#if CUDA_VERSION < 12000
 	cudaChannelFormatDesc channelDesc4 = cudaCreateChannelDesc<uint4>();
 	texRef1D_4_V.normalized = 0;
 	texRef1D_4_V.filterMode = cudaFilterModePoint;
 	texRef1D_4_V.addressMode[0] = cudaAddressModeClamp;
 	checkCudaErrors(cudaBindTexture(NULL, &texRef1D_4_V, d_V, &channelDesc4, size));
+#endif
 	return true;
 }
 
 bool FermiKernel::bindtexture_2D(uint32_t *d_V, int width, int height, size_t pitch)
 {
+#if CUDA_VERSION < 12000
 	cudaChannelFormatDesc channelDesc4 = cudaCreateChannelDesc<uint4>();
 	texRef2D_4_V.normalized = 0;
 	texRef2D_4_V.filterMode = cudaFilterModePoint;
@@ -63,21 +68,24 @@ bool FermiKernel::bindtexture_2D(uint32_t *d_V, int width, int height, size_t pi
 	// maintain texture width of TEXWIDTH (max. limit is 65000)
 	while (width > TEXWIDTH) { width /= 2; height *= 2; pitch /= 2; }
 	while (width < TEXWIDTH) { width *= 2; height = (height+1)/2; pitch *= 2; }
-//    fprintf(stderr, "total size: %u, %u bytes\n", pitch * height, width * sizeof(uint32_t) * 4 * height);
-//    fprintf(stderr, "binding width width=%d, height=%d, pitch=%d\n", width, height,pitch);
 	checkCudaErrors(cudaBindTexture2D(NULL, &texRef2D_4_V, d_V, &channelDesc4, width, height, pitch));
+#endif
 	return true;
 }
 
 bool FermiKernel::unbindtexture_1D()
 {
+#if CUDA_VERSION < 12000
 	checkCudaErrors(cudaUnbindTexture(texRef1D_4_V));
+#endif
 	return true;
 }
 
 bool FermiKernel::unbindtexture_2D()
 {
+#if CUDA_VERSION < 12000
 	checkCudaErrors(cudaUnbindTexture(texRef2D_4_V));
+#endif
 	return true;
 }
 

@@ -11,7 +11,9 @@ uint32_t *d_state[MAX_GPUS];
 uint4 *d_temp4[MAX_GPUS];
 
 // texture bound to d_temp4[thr_id], for read access in Compaction kernel
+#if CUDA_VERSION < 12000
 texture<uint4, 1, cudaReadModeElementType> texRef1D_128;
+#endif
 
 #define DEVICE_DIRECT_CONSTANTS
 
@@ -683,6 +685,7 @@ int x11_simd512_cpu_init(int thr_id, uint32_t threads)
 	cudaMemcpyToSymbol(d_cw3, h_cw3, sizeof(h_cw3), 0, cudaMemcpyHostToDevice);
 #endif
 
+#if CUDA_VERSION < 12000
 	// Texture for 128-Bit Zugriffe
 	cudaChannelFormatDesc channelDesc128 = cudaCreateChannelDesc<uint4>();
 	texRef1D_128.normalized = 0;
@@ -690,6 +693,7 @@ int x11_simd512_cpu_init(int thr_id, uint32_t threads)
 	texRef1D_128.addressMode[0] = cudaAddressModeClamp;
 
 	CUDA_CALL_OR_RET_X(cudaBindTexture(NULL, &texRef1D_128, d_temp4[thr_id], &channelDesc128, 64*sizeof(uint4)*threads), (int) err);
+#endif
 
 	return 0;
 }

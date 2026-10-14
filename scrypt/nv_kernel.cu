@@ -40,8 +40,10 @@ template <int ALGO, int TEX_DIM> __global__ void nv_scrypt_core_kernelB_LG(uint3
 __constant__ uint32_t* c_V[TOTAL_WARP_LIMIT];
 
 // using texture references for the "tex" variants of the B kernels
+#if CUDA_VERSION < 12000
 texture<uint4, 1, cudaReadModeElementType> texRef1D_4_V;
 texture<uint4, 2, cudaReadModeElementType> texRef2D_4_V;
+#endif
 
 // iteration count N
 __constant__ uint32_t c_N;
