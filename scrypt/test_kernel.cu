@@ -42,12 +42,13 @@ __constant__ uint32_t c_SCRATCH_WU_PER_WARP;   // (SCRATCH * WU_PER_WARP)
 __constant__ uint32_t c_SCRATCH_WU_PER_WARP_1; // (SCRATCH * WU_PER_WARP) - 1
 
 // using texture references for the "tex" variants of the B kernels
-#if CUDA_VERSION >= 12000
-static __device__ uint4 tex1Dfetch(int dummy, unsigned int loc) { return make_uint4(0,0,0,0); }
-static __device__ uint4 tex1Dfetch(int dummy, long loc) { return make_uint4(0,0,0,0); }
-static __device__ uint4 tex2D(int dummy, float x, float y) { return make_uint4(0,0,0,0); }
-static const int texRef1D_4_V = 0;
-static const int texRef2D_4_V = 0;
+#if defined(__CUDACC_VER_MAJOR__) && __CUDACC_VER_MAJOR__ >= 12
+struct DummyTex { int normalized; int filterMode; int addressMode[2]; };
+static DummyTex texRef1D_4_V;
+static DummyTex texRef2D_4_V;
+static __device__ uint4 tex1Dfetch(DummyTex tex, unsigned int loc) { return make_uint4(0,0,0,0); }
+static __device__ uint4 tex1Dfetch(DummyTex tex, long loc) { return make_uint4(0,0,0,0); }
+static __device__ uint4 tex2D(DummyTex tex, float x, float y) { return make_uint4(0,0,0,0); }
 #else
 texture<uint4, 1, cudaReadModeElementType> texRef1D_4_V;
 texture<uint4, 2, cudaReadModeElementType> texRef2D_4_V;
@@ -671,16 +672,19 @@ TestKernel::TestKernel() : KernelInterface()
 
 bool TestKernel::bindtexture_1D(uint32_t *d_V, size_t size)
 {
+#if !defined(__CUDACC_VER_MAJOR__) || __CUDACC_VER_MAJOR__ < 12
 	cudaChannelFormatDesc channelDesc4 = cudaCreateChannelDesc<uint4>();
 	texRef1D_4_V.normalized = 0;
 	texRef1D_4_V.filterMode = cudaFilterModePoint;
 	texRef1D_4_V.addressMode[0] = cudaAddressModeClamp;
 	checkCudaErrors(cudaBindTexture(NULL, &texRef1D_4_V, d_V, &channelDesc4, size));
+#endif
 	return true;
 }
 
 bool TestKernel::bindtexture_2D(uint32_t *d_V, int width, int height, size_t pitch)
 {
+#if !defined(__CUDACC_VER_MAJOR__) || __CUDACC_VER_MAJOR__ < 12
 	cudaChannelFormatDesc channelDesc4 = cudaCreateChannelDesc<uint4>();
 	texRef2D_4_V.normalized = 0;
 	texRef2D_4_V.filterMode = cudaFilterModePoint;
@@ -690,18 +694,23 @@ bool TestKernel::bindtexture_2D(uint32_t *d_V, int width, int height, size_t pit
 	while (width > TEXWIDTH) { width /= 2; height *= 2; pitch /= 2; }
 	while (width < TEXWIDTH) { width *= 2; height = (height+1)/2; pitch *= 2; }
 	checkCudaErrors(cudaBindTexture2D(NULL, &texRef2D_4_V, d_V, &channelDesc4, width, height, pitch));
+#endif
 	return true;
 }
 
 bool TestKernel::unbindtexture_1D()
 {
+#if !defined(__CUDACC_VER_MAJOR__) || __CUDACC_VER_MAJOR__ < 12
 	checkCudaErrors(cudaUnbindTexture(texRef1D_4_V));
+#endif
 	return true;
 }
 
 bool TestKernel::unbindtexture_2D()
 {
+#if !defined(__CUDACC_VER_MAJOR__) || __CUDACC_VER_MAJOR__ < 12
 	checkCudaErrors(cudaUnbindTexture(texRef2D_4_V));
+#endif
 	return true;
 }
 
