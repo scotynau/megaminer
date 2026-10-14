@@ -1671,7 +1671,9 @@ int nvapi_set_gpuclock(unsigned int devNum, uint32_t clock)
 		 // unsure about devNum, so be safe
 		cudaGetDeviceProperties(&props, d);
 		if (props.pciBusID == busId) {
-			delta = (clock * 1000) - props.clockRate;
+			int clockRate = 0;
+			cudaDeviceGetAttribute(&clockRate, cudaDevAttrClockRate, d);
+			delta = (clock * 1000) - clockRate;
 			break;
 		}
 	}
