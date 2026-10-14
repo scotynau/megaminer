@@ -40,7 +40,13 @@ template <int ALGO, int TEX_DIM> __global__ void nv_scrypt_core_kernelB_LG(uint3
 __constant__ uint32_t* c_V[TOTAL_WARP_LIMIT];
 
 // using texture references for the "tex" variants of the B kernels
-#if CUDA_VERSION < 12000
+#if CUDA_VERSION >= 12000
+static __device__ uint4 tex1Dfetch(int dummy, unsigned int loc) { return make_uint4(0,0,0,0); }
+static __device__ uint4 tex1Dfetch(int dummy, long loc) { return make_uint4(0,0,0,0); }
+static __device__ uint4 tex2D(int dummy, float x, float y) { return make_uint4(0,0,0,0); }
+static const int texRef1D_4_V = 0;
+static const int texRef2D_4_V = 0;
+#else
 texture<uint4, 1, cudaReadModeElementType> texRef1D_4_V;
 texture<uint4, 2, cudaReadModeElementType> texRef2D_4_V;
 #endif
@@ -56,16 +62,19 @@ NVKernel::NVKernel() : KernelInterface()
 
 bool NVKernel::bindtexture_1D(uint32_t *d_V, size_t size)
 {
+#if CUDA_VERSION < 12000
 	cudaChannelFormatDesc channelDesc4 = cudaCreateChannelDesc<uint4>();
 	texRef1D_4_V.normalized = 0;
 	texRef1D_4_V.filterMode = cudaFilterModePoint;
 	texRef1D_4_V.addressMode[0] = cudaAddressModeClamp;
 	checkCudaErrors(cudaBindTexture(NULL, &texRef1D_4_V, d_V, &channelDesc4, size));
+#endif
 	return true;
 }
 
 bool NVKernel::bindtexture_2D(uint32_t *d_V, int width, int height, size_t pitch)
 {
+#if CUDA_VERSION < 12000
 	cudaChannelFormatDesc channelDesc4 = cudaCreateChannelDesc<uint4>();
 	texRef2D_4_V.normalized = 0;
 	texRef2D_4_V.filterMode = cudaFilterModePoint;
@@ -75,18 +84,23 @@ bool NVKernel::bindtexture_2D(uint32_t *d_V, int width, int height, size_t pitch
 	while (width > TEXWIDTH) { width /= 2; height *= 2; pitch /= 2; }
 	while (width < TEXWIDTH) { width *= 2; height = (height+1)/2; pitch *= 2; }
 	checkCudaErrors(cudaBindTexture2D(NULL, &texRef2D_4_V, d_V, &channelDesc4, width, height, pitch));
+#endif
 	return true;
 }
 
 bool NVKernel::unbindtexture_1D()
 {
+#if CUDA_VERSION < 12000
 	checkCudaErrors(cudaUnbindTexture(texRef1D_4_V));
+#endif
 	return true;
 }
 
 bool NVKernel::unbindtexture_2D()
 {
+#if CUDA_VERSION < 12000
 	checkCudaErrors(cudaUnbindTexture(texRef2D_4_V));
+#endif
 	return true;
 }
 

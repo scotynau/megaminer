@@ -42,7 +42,13 @@ __constant__ uint32_t c_SCRATCH_WU_PER_WARP;   // (SCRATCH * WU_PER_WARP)
 __constant__ uint32_t c_SCRATCH_WU_PER_WARP_1; // (SCRATCH * WU_PER_WARP) - 1
 
 // using texture references for the "tex" variants of the B kernels
-#if CUDA_VERSION < 12000
+#if CUDA_VERSION >= 12000
+static __device__ uint4 tex1Dfetch(int dummy, unsigned int loc) { return make_uint4(0,0,0,0); }
+static __device__ uint4 tex1Dfetch(int dummy, long loc) { return make_uint4(0,0,0,0); }
+static __device__ uint4 tex2D(int dummy, float x, float y) { return make_uint4(0,0,0,0); }
+static const int texRef1D_4_V = 0;
+static const int texRef2D_4_V = 0;
+#else
 texture<uint4, 1, cudaReadModeElementType> texRef1D_4_V;
 texture<uint4, 2, cudaReadModeElementType> texRef2D_4_V;
 #endif
