@@ -47,7 +47,7 @@ static unsigned int* d_textures[MAX_GPUS][1];
 #define mixtab2(x) mixtabs[(x)+512]
 #define mixtab3(x) mixtabs[(x)+768]
 
-static texture<unsigned int, 1, cudaReadModeElementType> mixTab0Tex;
+__constant__ uint32_t c_mixTab0_512[256];
 
 static const uint32_t mixtab0[] = {
 	0x63633297, 0x7c7c6feb, 0x77775ec7, 0x7b7b7af7, 0xf2f2e8e5, 0x6b6b0ab7, 0x6f6f16a7, 0xc5c56d39,
@@ -249,7 +249,7 @@ void x13_fugue512_gpu_hash_64(uint32_t threads, uint64_t *g_hash)
 
 	// load shared mem (with 256 threads)
 	const uint32_t thr = threadIdx.x & 0xFF;
-	const uint32_t tmp = tex1Dfetch(mixTab0Tex, thr);
+	const uint32_t tmp = c_mixTab0_512[thr];
 	mixtabs[thr] = tmp;
 	mixtabs[thr+256] = ROR8(tmp);
 	mixtabs[thr+512] = ROL16(tmp);
@@ -257,7 +257,7 @@ void x13_fugue512_gpu_hash_64(uint32_t threads, uint64_t *g_hash)
 #if TPB <= 256
 	if (blockDim.x < 256) {
 		const uint32_t thr = (threadIdx.x + 0x80) & 0xFF;
-		const uint32_t tmp = tex1Dfetch(mixTab0Tex, thr);
+		const uint32_t tmp = c_mixTab0_512[thr];
 		mixtabs[thr] = tmp;
 		mixtabs[thr + 256] = ROR8(tmp);
 		mixtabs[thr + 512] = ROL16(tmp);
@@ -383,13 +383,12 @@ void x13_fugue512_gpu_hash_64(uint32_t threads, uint64_t *g_hash)
 __host__
 void x13_fugue512_cpu_init(int thr_id, uint32_t threads)
 {
-	texDef(0, mixTab0Tex, mixTab0m, mixtab0, sizeof(uint32_t)*256);
+	cudaMemcpyToSymbol(c_mixTab0_512, mixtab0, sizeof(uint32_t)*256);
 }
 
 __host__
 void x13_fugue512_cpu_free(int thr_id)
 {
-	cudaFree(d_textures[thr_id][0]);
 }
 
 __host__

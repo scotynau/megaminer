@@ -36,6 +36,7 @@ static unsigned int *d_textures[MAX_GPUS][8];
 #define T3up(x) (*((uint32_t*)mixtabs + (1536+(x))))
 #define T3dn(x) (*((uint32_t*)mixtabs + (1792+(x))))
 
+#if CUDA_VERSION < 12000
 texture<unsigned int, 1, cudaReadModeElementType> t0up1;
 texture<unsigned int, 1, cudaReadModeElementType> t0dn1;
 texture<unsigned int, 1, cudaReadModeElementType> t1up1;
@@ -44,6 +45,7 @@ texture<unsigned int, 1, cudaReadModeElementType> t2up1;
 texture<unsigned int, 1, cudaReadModeElementType> t2dn1;
 texture<unsigned int, 1, cudaReadModeElementType> t3up1;
 texture<unsigned int, 1, cudaReadModeElementType> t3dn1;
+#endif
 
 extern uint32_t T0up_cpu[];
 extern uint32_t T0dn_cpu[];

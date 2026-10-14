@@ -1,6 +1,11 @@
 #ifndef __MINER_H__
 #define __MINER_H__
 
+#include <cuda_runtime.h>
+#ifndef cudaThreadSynchronize
+#define cudaThreadSynchronize cudaDeviceSynchronize
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
