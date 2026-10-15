@@ -110,6 +110,17 @@ static const char *megamec_hash_names[18] =
     "cubehash", "shabal", "hamsi", "sha512", "haval"
 };
 
+// Extract nTime (host order) from a big-endian word-swapped header array.
+// endiandata[i] = be32enc(pdata[i]) => bytes 68..71 hold nTime big-endian,
+// so a little-endian read yields swab32(nTime); swab32() restores nTime.
+static inline uint32_t megamec_timestamp(const void *endiandata)
+{
+    const uint8_t *b = (const uint8_t *)endiandata;
+    uint32_t le = (uint32_t)b[68] | ((uint32_t)b[69] << 8) |
+                  ((uint32_t)b[70] << 16) | ((uint32_t)b[71] << 24);
+    return swab32(le);
+}
+
 // ---------- CPU hash (exact port of mega-mec.h) ----------
 
 extern "C" void megamechash(void *output, const void *input)
@@ -133,10 +144,8 @@ extern "C" void megamechash(void *output, const void *input)
     sph_gost512_context      ctx_gost;
     sph_haval256_5_context   ctx_haval;
 
-    // Extract timestamp from block header (bytes 68-71, little-endian nTime)
-    const uint8_t *hdr = (const uint8_t *) input;
-    uint32_t timestamp = (uint32_t)hdr[68] | ((uint32_t)hdr[69] << 8) |
-                         ((uint32_t)hdr[70] << 16) | ((uint32_t)hdr[71] << 24);
+    // Extract timestamp from block header (nTime field)
+    uint32_t timestamp = megamec_timestamp(input);
 
     uint32_t hash[23][16];  // 23 rounds × 64 bytes (16 × uint32_t)
     uint32_t permutation_1[HASH_FUNC_COUNT_1];
@@ -536,9 +545,8 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
     for (int i = 0; i < 20; i++)
         be32enc(&endiandata[i], pdata[i]);
 
-    // Extract timestamp from the big-endian header
-    // nTime is at bytes 68-71 of the header (words 17 in the original pdata)
-    uint32_t timestamp = pdata[17];  // nTime is already in little-endian in pdata
+    // Extract timestamp from the header — MUST use the same source as megamechash
+    uint32_t timestamp = megamec_timestamp(endiandata);
 
     // Compute permutations from timestamp
     uint32_t permutation_1[HASH_FUNC_COUNT_1];
