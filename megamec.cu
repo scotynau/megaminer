@@ -672,6 +672,25 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
                 gpu_increment_reject(thr_id);
                 if (!opt_quiet)
                     gpulog(LOG_WARNING, thr_id, "MEGAMEC result for %08x does not validate on CPU!", work->nonces[0]);
+                if (opt_debug) {
+                    // Forensic dump: GPU-computed hash for the exact slot the GPU flagged
+                    // vs the CPU-recomputed hash. slot = thread index inside this batch.
+                    uint32_t slot = work->nonces[0] - pdata[19];
+                    gpulog(LOG_DEBUG, thr_id, "MEGAMEC FAILDUMP nonce=%08x slot=%u thr=%u Htarg=%08x cpuHash7=%08x below(target)=%d",
+                        work->nonces[0], slot, throughput, Htarg, vhash[7],
+                        (vhash[7] < Htarg || (vhash[7] == Htarg && fulltest(vhash, ptarget))) ? 1 : 0);
+                    if (slot < throughput) {
+                        uint32_t gh[16];
+                        cudaMemcpy(gh, d_hash[thr_id] + (slot << 4), 64, cudaMemcpyDeviceToHost);
+                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC FAILDUMP GPU hash: %08x %08x %08x %08x %08x %08x %08x %08x | %08x %08x %08x %08x %08x %08x %08x %08x",
+                            gh[0], gh[1], gh[2], gh[3], gh[4], gh[5], gh[6], gh[7],
+                            gh[8], gh[9], gh[10], gh[11], gh[12], gh[13], gh[14], gh[15]);
+                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC FAILDUMP CPU hash: %08x %08x %08x %08x %08x %08x %08x %08x",
+                            vhash[0], vhash[1], vhash[2], vhash[3], vhash[4], vhash[5], vhash[6], vhash[7]);
+                    } else {
+                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC FAILDUMP slot OUT OF RANGE");
+                    }
+                }
                 pdata[19] = work->nonces[0] + 1;
                 continue;
             }
