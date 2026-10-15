@@ -130,14 +130,12 @@ extern void megamec_hamsi512_cpu_hash_64(int thr_id, uint32_t threads, uint32_t 
 
 extern void megamec_fugue512_cpu_init(int thr_id, uint32_t threads);
 extern void megamec_fugue512_cpu_hash_64(int thr_id, uint32_t threads, uint32_t startNounce, uint32_t *d_nonceVector, uint32_t *d_hash, int order);
-extern void megamec_fugue512_cpu_free(int thr_id);
 
 extern void megamec_shabal512_cpu_init(int thr_id, uint32_t threads);
 extern void megamec_shabal512_cpu_hash_64(int thr_id, uint32_t threads, uint32_t startNounce, uint32_t *d_nonceVector, uint32_t *d_hash, int order);
 
 extern void megamec_whirlpool512_cpu_init(int thr_id, uint32_t threads, int flag);
 extern void megamec_whirlpool512_cpu_hash_64(int thr_id, uint32_t threads, uint32_t startNounce, uint32_t *d_nonceVector, uint32_t *d_hash, int order);
-extern void megamec_whirlpool512_cpu_free(int thr_id);
 
 extern void megamec_sha512_cpu_init(int thr_id, uint32_t threads);
 extern void megamec_sha512_cpu_hash_64(int thr_id, uint32_t threads, uint32_t startNounce, uint32_t *d_hash, int order);

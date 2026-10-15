@@ -792,11 +792,13 @@ extern "C" void free_megamec(int thr_id)
     free(h_hash[thr_id]);
     free(sub_threads[thr_id]);
 
-    megamec_blake512_cpu_free(thr_id);
-    megamec_groestl512_cpu_free(thr_id);
-    megamec_simd512_cpu_free(thr_id);
-    megamec_fugue512_cpu_free(thr_id);
-    megamec_whirlpool512_cpu_free(thr_id);
+    // Only call free for algorithms that actually have free functions
+    quark_blake512_cpu_free(thr_id);
+    quark_groestl512_cpu_free(thr_id);
+    x11_simd512_cpu_free(thr_id);
+    x13_fugue512_cpu_free(thr_id);
+    whirlpool512_free_sm3(thr_id);
+    x15_whirlpool_cpu_free(thr_id);
 
     cuda_check_cpu_free(thr_id);
     init[thr_id] = false;
