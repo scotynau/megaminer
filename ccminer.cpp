@@ -2387,10 +2387,10 @@ case ALGO_X14:
 		case ALGO_MJOLLNIR:
 			rc = scanhash_heavy(thr_id, &work, max_nonce, &hashes_done, 0, MNR_BLKHDR_SZ);
 			break;
+#endif
 		case ALGO_MEGAMEC:
 			rc = scanhash_megamec(thr_id, &work, max_nonce, &hashes_done);
 			break;
-#endif
 		case ALGO_KECCAK:
 		case ALGO_KECCAKC:
 			rc = scanhash_keccak256(thr_id, &work, max_nonce, &hashes_done);
