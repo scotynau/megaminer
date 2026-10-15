@@ -601,29 +601,37 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
         // Round 0: blake512 hash_80
         quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
         order++;
-        if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC r0 ok nonce=%08x", pdata[19]);
 
         // Rounds 1-7: permutation_1 values
-        for (int i = 1; i < HASH_FUNC_COUNT_1; i++) {
-            if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC r%d (p1=%u) calling...", i, permutation_1[i]);
+        for (int i = 1; i < HASH_FUNC_COUNT_1; i++)
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_1[i], &order);
-        }
 
         // Rounds 8-15: permutation_2 values
-        for (int i = HASH_FUNC_COUNT_1; i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i++) {
-            if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC r%d (p2=%u) calling...", i, permutation_2[i]);
+        for (int i = HASH_FUNC_COUNT_1; i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i++)
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_2[i], &order);
-        }
 
         // Rounds 16-22: permutation_3 values
         for (int i = HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2;
-             i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2 + HASH_FUNC_COUNT_3; i++) {
-            if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC r%d (p3=%u) calling...", i, permutation_3[i]);
+             i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2 + HASH_FUNC_COUNT_3; i++)
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_3[i], &order);
-        }
 
-        if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC all rounds ok, checking nonce=%08x", pdata[19]);
-        dbgcnt[thr_id]++;
+        // One-shot GPU-vs-CPU hash comparison for the first nonce of this batch
+        if (dbg) {
+            uint32_t gh[16];
+            uint32_t vh[8];
+            uint32_t ed[20];
+            cudaMemcpy(gh, d_hash[thr_id], 64, cudaMemcpyDeviceToHost);
+            memcpy(ed, endiandata, sizeof(ed));
+            be32enc(&ed[19], pdata[19]);
+            megamechash(vh, ed);
+            gpulog(LOG_DEBUG, thr_id, "MEGAMEC GPU hash: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                gh[0], gh[1], gh[2], gh[3], gh[4], gh[5], gh[6], gh[7],
+                gh[8], gh[9], gh[10], gh[11], gh[12], gh[13], gh[14], gh[15]);
+            gpulog(LOG_DEBUG, thr_id, "MEGAMEC CPU hash: %08x %08x %08x %08x %08x %08x %08x %08x",
+                vh[0], vh[1], vh[2], vh[3], vh[4], vh[5], vh[6], vh[7]);
+            gpulog(LOG_DEBUG, thr_id, "MEGAMEC target[7]=%08x nonce=%08x", ptarget[7], pdata[19]);
+            dbgcnt[thr_id]++;
+        }
 
         *hashes_done = pdata[19] - first_nonce + throughput;
 
