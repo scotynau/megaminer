@@ -587,6 +587,13 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
     quark_blake512_cpu_setBlock_80(thr_id, endiandata);
     cuda_check_cpu_setTarget(ptarget);
 
+    if (opt_debug)
+        gpulog(LOG_DEBUG, thr_id, "MEGAMEC scan enter thr=%d ts=%u throughput=%u max_nonce=%08x",
+            thr_id, timestamp, throughput, max_nonce);
+
+    static int dbgcnt[MAX_GPUS] = { 0 };
+    int dbg = (opt_debug && dbgcnt[thr_id] < 3);
+
     do
     {
         int order = 0;
@@ -594,19 +601,29 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
         // Round 0: blake512 hash_80
         quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
         order++;
+        if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC r0 ok nonce=%08x", pdata[19]);
 
         // Rounds 1-7: permutation_1 values
-        for (int i = 1; i < HASH_FUNC_COUNT_1; i++)
+        for (int i = 1; i < HASH_FUNC_COUNT_1; i++) {
+            if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC r%d (p1=%u) calling...", i, permutation_1[i]);
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_1[i], &order);
+        }
 
         // Rounds 8-15: permutation_2 values
-        for (int i = HASH_FUNC_COUNT_1; i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i++)
+        for (int i = HASH_FUNC_COUNT_1; i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i++) {
+            if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC r%d (p2=%u) calling...", i, permutation_2[i]);
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_2[i], &order);
+        }
 
         // Rounds 16-22: permutation_3 values
         for (int i = HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2;
-             i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2 + HASH_FUNC_COUNT_3; i++)
+             i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2 + HASH_FUNC_COUNT_3; i++) {
+            if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC r%d (p3=%u) calling...", i, permutation_3[i]);
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_3[i], &order);
+        }
+
+        if (dbg) gpulog(LOG_DEBUG, thr_id, "MEGAMEC all rounds ok, checking nonce=%08x", pdata[19]);
+        dbgcnt[thr_id]++;
 
         *hashes_done = pdata[19] - first_nonce + throughput;
 
