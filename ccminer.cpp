@@ -265,6 +265,7 @@ Options:\n\
 			lyra2       CryptoCoin\n\
 			lyra2v2     VertCoin\n\
 			lyra2z      ZeroCoin (3rd impl)\n\
+			megamec     Megacoin megamec (23 rounds)\n\
 			myr-gr      Myriad-Groestl\n\
 			neoscrypt   FeatherCoin, Phoenix, UFO...\n\
 			nist5       NIST5 (TalkCoin)\n\
@@ -1710,6 +1711,7 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		case ALGO_TIMETRAVEL:
 		case ALGO_BITCORE:
 		case ALGO_X16R:
+		case ALGO_MEGAMEC:
 			work_set_target(work, sctx->job.diff / (256.0 * opt_difficulty));
 			break;
 		case ALGO_KECCAK:
@@ -2254,11 +2256,12 @@ static void *miner_thread(void *userdata)
 			case ALGO_WHIRLPOOL:
 				minmax = 0x400000;
 				break;
-			case ALGO_X14:
-			case ALGO_X15:
-			case ALGO_X16R:
-				minmax = 0x300000;
-				break;
+case ALGO_X14:
+		case ALGO_X15:
+		case ALGO_X16R:
+		case ALGO_MEGAMEC:
+			minmax = 0x300000;
+			break;
 			case ALGO_LYRA2:
 			case ALGO_LYRA2Z:
 			case ALGO_NEOSCRYPT:
@@ -2383,6 +2386,9 @@ static void *miner_thread(void *userdata)
 			break;
 		case ALGO_MJOLLNIR:
 			rc = scanhash_heavy(thr_id, &work, max_nonce, &hashes_done, 0, MNR_BLKHDR_SZ);
+			break;
+		case ALGO_MEGAMEC:
+			rc = scanhash_megamec(thr_id, &work, max_nonce, &hashes_done);
 			break;
 #endif
 		case ALGO_KECCAK:

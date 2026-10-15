@@ -76,6 +76,7 @@ void algo_free_all(int thr_id)
 	free_lyra2(thr_id);
 	free_lyra2v2(thr_id);
 	free_lyra2Z(thr_id);
+	free_megamec(thr_id);
 	free_myriad(thr_id);
 	free_neoscrypt(thr_id);
 	free_nist5(thr_id);

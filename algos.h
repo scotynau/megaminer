@@ -33,6 +33,7 @@ enum sha_algos {
 	ALGO_LYRA2v2,
 	ALGO_LYRA2Z,
 	ALGO_MJOLLNIR,		/* Hefty hash */
+	ALGO_MEGAMEC,		/* Megacoin megamec */
 	ALGO_MYR_GR,
 	ALGO_NEOSCRYPT,
 	ALGO_NIST5,
@@ -103,6 +104,7 @@ static const char *algo_names[] = {
 	"lyra2v2",
 	"lyra2z",
 	"mjollnir",
+	"megamec",
 	"myr-gr",
 	"neoscrypt",
 	"nist5",
@@ -191,6 +193,8 @@ static inline int algo_to_int(char* arg)
 			i = ALGO_WHIRLPOOL;
 		else if (!strcasecmp("ziftr", arg))
 			i = ALGO_ZR5;
+		else if (!strcasecmp("megam", arg))
+			i = ALGO_MEGAMEC;
 		else
 			i = -1;
 	}
