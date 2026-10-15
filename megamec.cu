@@ -477,6 +477,7 @@ static void megamec_gpu_hash_pair(int thr_id, uint32_t throughput, uint32_t star
 
 // ---------- Init state ----------
 
+static uint32_t *d_hash[MAX_GPUS];
 static bool init[MAX_GPUS] = { 0 };
 
 // ---------- Scanhash ----------
