@@ -598,7 +598,7 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
             thr_id, timestamp, throughput, max_nonce);
 
     static int dbgcnt[MAX_GPUS] = { 0 };
-    int dbg = (opt_debug && dbgcnt[thr_id] < 12);
+    int dbg = (opt_debug && dbgcnt[thr_id] < 4);
 
     do
     {
@@ -622,8 +622,10 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_3[i], &order);
 
         // DEBUG: GPU-vs-CPU sweep, 32 contiguous spans of 64 slots (2048 samples).
-        // Reports how many slots the GPU hashes differently from the CPU and which
-        // ones, so we can tell a deterministic indexing bug from a race.
+        // Also builds the full-batch CPU hash table so a mismatching GPU slot can be
+        // located: if the GPU hash of slot s equals the CPU hash of a DIFFERENT slot
+        // q, the GPU slot->nonce mapping is shifted (indexing bug); if NO slot in the
+        // batch matches, the GPU computation itself is wrong for that slot.
         if (dbg) {
             uint32_t gh[16];
             uint32_t vh[8];
@@ -636,6 +638,19 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
             const uint32_t span = 64;
             int total = 0, bad = 0, nshow = 0;
             uint32_t firstbad = 0, lastbad = 0;
+
+            // One full-batch CPU hash table (8 uint32 per slot), built once.
+            static uint32_t *cpu_tab = NULL;
+            if (cpu_tab == NULL)
+                cpu_tab = new uint32_t[(size_t)throughput * 8];
+            if (cpu_tab != NULL) {
+                memcpy(ed, endiandata, sizeof(ed));
+                for (uint32_t q = 0; q < throughput; q++) {
+                    be32enc(&ed[19], pdata[19] + q);
+                    megamechash(&cpu_tab[(size_t)q * 8], ed);
+                }
+            }
+
             memcpy(ed, endiandata, sizeof(ed));
             for (uint32_t base = 0; base < throughput; base += step) {
                 for (uint32_t k = 0; k < span && base + k < throughput; k++) {
@@ -668,6 +683,18 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
                     fb_gh[8], fb_gh[9], fb_gh[10], fb_gh[11], fb_gh[12], fb_gh[13], fb_gh[14], fb_gh[15]);
                 gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD CPU: %08x %08x %08x %08x %08x %08x %08x %08x",
                     fb_vh[0], fb_vh[1], fb_vh[2], fb_vh[3], fb_vh[4], fb_vh[5], fb_vh[6], fb_vh[7]);
+                // MAPFIND: find the slot whose CPU hash equals the GPU hash of fb_slot.
+                if (cpu_tab != NULL) {
+                    int found = -1;
+                    for (uint32_t q = 0; q < throughput; q++) {
+                        if (memcmp(&cpu_tab[(size_t)q * 8], fb_gh, 32) == 0) { found = (int)q; break; }
+                    }
+                    if (found >= 0)
+                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC MAPFIND slot=%u -> q=%u (delta=%d)",
+                            fb_slot, (uint32_t)found, found - (int)fb_slot);
+                    else
+                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC MAPFIND slot=%u NO MATCH in batch", fb_slot);
+                }
             }
             {
                 char lb[400];
