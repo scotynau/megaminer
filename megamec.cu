@@ -621,7 +621,7 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
              i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2 + HASH_FUNC_COUNT_3; i++)
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_3[i], &order);
 
-        // DEBUG: strided GPU-vs-CPU sweep across the whole batch (2048 samples).
+        // DEBUG: GPU-vs-CPU sweep, 32 contiguous spans of 64 slots (2048 samples).
         // Reports how many slots the GPU hashes differently from the CPU and which
         // ones, so we can tell a deterministic indexing bug from a race.
         if (dbg) {
@@ -630,31 +630,37 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
             uint32_t ed[20];
             static uint32_t badslots[32];
             static uint32_t fb_gh[16], fb_vh[8], fb_slot = 0;
-            const uint32_t stride = (throughput / 2048) ? (throughput / 2048) : 1;
+            // Sample 32 contiguous spans of 64 slots each (covers every warp lane
+            // offset 0..63, unlike a pure stride which would only ever hit lane 0).
+            const uint32_t step = (throughput / 32) ? (throughput / 32) : 1;
+            const uint32_t span = 64;
             int total = 0, bad = 0, nshow = 0;
             uint32_t firstbad = 0, lastbad = 0;
             memcpy(ed, endiandata, sizeof(ed));
-            for (uint32_t s = 0; s < throughput; s += stride) {
-                cudaMemcpy(gh, d_hash[thr_id] + (s << 4), 64, cudaMemcpyDeviceToHost);
-                be32enc(&ed[19], pdata[19] + s);
-                megamechash(vh, ed);
-                total++;
-                if (memcmp(vh, gh, 32) != 0) {
-                    if (!bad) {
-                        firstbad = s;
-                        if (nshow == 0) {
-                            fb_slot = s;
-                            memcpy(fb_gh, gh, sizeof(fb_gh));
-                            memcpy(fb_vh, vh, sizeof(fb_vh));
+            for (uint32_t base = 0; base < throughput; base += step) {
+                for (uint32_t k = 0; k < span && base + k < throughput; k++) {
+                    const uint32_t s = base + k;
+                    cudaMemcpy(gh, d_hash[thr_id] + (s << 4), 64, cudaMemcpyDeviceToHost);
+                    be32enc(&ed[19], pdata[19] + s);
+                    megamechash(vh, ed);
+                    total++;
+                    if (memcmp(vh, gh, 32) != 0) {
+                        if (!bad) {
+                            firstbad = s;
+                            if (nshow == 0) {
+                                fb_slot = s;
+                                memcpy(fb_gh, gh, sizeof(fb_gh));
+                                memcpy(fb_vh, vh, sizeof(fb_vh));
+                            }
                         }
+                        lastbad = s;
+                        bad++;
+                        if (nshow < 32) badslots[nshow++] = s;
                     }
-                    lastbad = s;
-                    bad++;
-                    if (nshow < 32) badslots[nshow++] = s;
                 }
             }
-            gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP start=%08x thr=%u stride=%u bad=%d/%d first=%u last=%u target7=%08x",
-                pdata[19], throughput, stride, bad, total, firstbad, lastbad, ptarget[7]);
+            gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP start=%08x thr=%u step=%u span=%u bad=%d/%d first=%u last=%u target7=%08x",
+                pdata[19], throughput, step, span, bad, total, firstbad, lastbad, ptarget[7]);
             if (bad) {
                 gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD slot=%u nonce=%08x", fb_slot, pdata[19] + fb_slot);
                 gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD GPU: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
