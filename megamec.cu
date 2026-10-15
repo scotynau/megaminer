@@ -25,6 +25,11 @@ extern "C"
 #include "miner.h"
 #include "cuda_helper.h"
 #include "cuda_megamec.h"
+#include "quark/cuda_quark.h"
+#include "x11/cuda_x11.h"
+#include "x13/cuda_x13.h"
+#include "x15/cuda_x15.h"
+#include "x16r/cuda_x16r.h"
 
 #include <stdio.h>
 #include <unistd.h>
