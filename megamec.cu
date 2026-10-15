@@ -27,6 +27,8 @@ extern "C"
 #include "sph/sph_streebog.h"
 }
 
+#include <algorithm>  // std::next_permutation — MUST be before miner.h which defines min/max macros
+
 #include "miner.h"
 #include "cuda_helper.h"
 #include "cuda_megamec.h"
@@ -34,7 +36,6 @@ extern "C"
 #include <stdio.h>
 #include <unistd.h>
 #include <memory.h>
-#include <algorithm>  // std::next_permutation
 
 // ---------- GPU kernel declarations ----------
 
