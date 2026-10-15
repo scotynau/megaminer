@@ -110,15 +110,21 @@ static const char *megamec_hash_names[18] =
     "cubehash", "shabal", "hamsi", "sha512", "haval"
 };
 
-// Extract nTime (host order) from a big-endian word-swapped header array.
-// endiandata[i] = be32enc(pdata[i]) => bytes 68..71 hold nTime big-endian,
-// so a little-endian read yields swab32(nTime); swab32() restores nTime.
+// Extract nTime (host order) from the serialized 80-byte block header.
+//
+// ccminer builds endiandata[] with be32enc(pdata[i]) and pdata[17] =
+// le32dec(job.ntime), so bytes 68..71 come out as the REAL little-endian
+// header bytes of nTime (e.g. 81 1c d1 6a for 0x6ad11c81 = the value that
+// megamec_test.cpp passes straight into mega_mec() as `tm`).
+//
+// Therefore the plain little-endian read IS the timestamp. Do NOT swab32()
+// it — that byte-swap produced a different permutation and a hash the pool
+// (and the coin) never agreed with.
 static inline uint32_t megamec_timestamp(const void *endiandata)
 {
     const uint8_t *b = (const uint8_t *)endiandata;
-    uint32_t le = (uint32_t)b[68] | ((uint32_t)b[69] << 8) |
-                  ((uint32_t)b[70] << 16) | ((uint32_t)b[71] << 24);
-    return swab32(le);
+    return (uint32_t)b[68] | ((uint32_t)b[69] << 8) |
+           ((uint32_t)b[70] << 16) | ((uint32_t)b[71] << 24);
 }
 
 // ---------- CPU hash (exact port of mega-mec.h) ----------
