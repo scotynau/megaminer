@@ -598,7 +598,7 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
             thr_id, timestamp, throughput, max_nonce);
 
     static int dbgcnt[MAX_GPUS] = { 0 };
-    int dbg = (opt_debug && dbgcnt[thr_id] < 3);
+    int dbg = (opt_debug && dbgcnt[thr_id] < 12);
 
     do
     {
@@ -621,21 +621,59 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
              i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2 + HASH_FUNC_COUNT_3; i++)
             megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], permutation_3[i], &order);
 
-        // One-shot GPU-vs-CPU hash comparison for the first nonce of this batch
+        // DEBUG: strided GPU-vs-CPU sweep across the whole batch (2048 samples).
+        // Reports how many slots the GPU hashes differently from the CPU and which
+        // ones, so we can tell a deterministic indexing bug from a race.
         if (dbg) {
             uint32_t gh[16];
             uint32_t vh[8];
             uint32_t ed[20];
-            cudaMemcpy(gh, d_hash[thr_id], 64, cudaMemcpyDeviceToHost);
+            static uint32_t badslots[32];
+            static uint32_t fb_gh[16], fb_vh[8], fb_slot = 0;
+            const uint32_t stride = (throughput / 2048) ? (throughput / 2048) : 1;
+            int total = 0, bad = 0, nshow = 0;
+            uint32_t firstbad = 0, lastbad = 0;
             memcpy(ed, endiandata, sizeof(ed));
-            be32enc(&ed[19], pdata[19]);
-            megamechash(vh, ed);
-            gpulog(LOG_DEBUG, thr_id, "MEGAMEC GPU hash: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
-                gh[0], gh[1], gh[2], gh[3], gh[4], gh[5], gh[6], gh[7],
-                gh[8], gh[9], gh[10], gh[11], gh[12], gh[13], gh[14], gh[15]);
-            gpulog(LOG_DEBUG, thr_id, "MEGAMEC CPU hash: %08x %08x %08x %08x %08x %08x %08x %08x",
-                vh[0], vh[1], vh[2], vh[3], vh[4], vh[5], vh[6], vh[7]);
-            gpulog(LOG_DEBUG, thr_id, "MEGAMEC target[7]=%08x nonce=%08x", ptarget[7], pdata[19]);
+            for (uint32_t s = 0; s < throughput; s += stride) {
+                cudaMemcpy(gh, d_hash[thr_id] + (s << 4), 64, cudaMemcpyDeviceToHost);
+                be32enc(&ed[19], pdata[19] + s);
+                megamechash(vh, ed);
+                total++;
+                if (memcmp(vh, gh, 32) != 0) {
+                    if (!bad) {
+                        firstbad = s;
+                        if (nshow == 0) {
+                            fb_slot = s;
+                            memcpy(fb_gh, gh, sizeof(fb_gh));
+                            memcpy(fb_vh, vh, sizeof(fb_vh));
+                        }
+                    }
+                    lastbad = s;
+                    bad++;
+                    if (nshow < 32) badslots[nshow++] = s;
+                }
+            }
+            gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP start=%08x thr=%u stride=%u bad=%d/%d first=%u last=%u target7=%08x",
+                pdata[19], throughput, stride, bad, total, firstbad, lastbad, ptarget[7]);
+            if (bad) {
+                gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD slot=%u nonce=%08x", fb_slot, pdata[19] + fb_slot);
+                gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD GPU: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                    fb_gh[0], fb_gh[1], fb_gh[2], fb_gh[3], fb_gh[4], fb_gh[5], fb_gh[6], fb_gh[7],
+                    fb_gh[8], fb_gh[9], fb_gh[10], fb_gh[11], fb_gh[12], fb_gh[13], fb_gh[14], fb_gh[15]);
+                gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD CPU: %08x %08x %08x %08x %08x %08x %08x %08x",
+                    fb_vh[0], fb_vh[1], fb_vh[2], fb_vh[3], fb_vh[4], fb_vh[5], fb_vh[6], fb_vh[7]);
+            }
+            {
+                char lb[400];
+                int o = 0;
+                for (int k = 0; k < nshow; k++)
+                    o += snprintf(lb + o, sizeof(lb) - o, "%u ", badslots[k]);
+                gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP badslots: %s", lb);
+            }
+            gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP header: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                pdata[0], pdata[1], pdata[2], pdata[3], pdata[4], pdata[5], pdata[6], pdata[7],
+                pdata[8], pdata[9], pdata[10], pdata[11], pdata[12], pdata[13], pdata[14], pdata[15],
+                pdata[16], pdata[17], pdata[18], pdata[19]);
             dbgcnt[thr_id]++;
         }
 
