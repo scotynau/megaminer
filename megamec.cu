@@ -56,12 +56,12 @@ extern void x17_haval256_cpu_init(int thr_id, uint32_t threads);
 
 // setBlock_80
 extern void quark_blake512_cpu_setBlock_80(int thr_id, uint32_t *endiandata);
-extern void quark_bmw512_cpu_setBlock_80(uint32_t *endiandata);
+extern void quark_bmw512_cpu_setBlock_80(void *pdata);
 extern void groestl512_setBlock_80(int thr_id, uint32_t *endiandata);
 extern void jh512_setBlock_80(int thr_id, uint32_t *endiandata);
 extern void keccak512_setBlock_80(int thr_id, uint32_t *endiandata);
-extern void skein512_cpu_setBlock_80(uint32_t *endiandata);
-extern void qubit_luffa512_cpu_setBlock_80(uint32_t *endiandata);
+extern void skein512_cpu_setBlock_80(void *pdata);
+extern void qubit_luffa512_cpu_setBlock_80(void *pdata);
 extern void cubehash512_setBlock_80(int thr_id, uint32_t *endiandata);
 extern void x11_shavite512_setBlock_80(void *pdata);
 extern void whirlpool512_setBlock_80_sm3(void *pdata, const void *ptarget);
