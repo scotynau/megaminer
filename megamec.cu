@@ -406,13 +406,6 @@ extern "C" void megamechash(void *output, const void *input)
 // CPU reference for the FIRST hash of the case-5/case-19 pair (gost/streebog) over 64 bytes.
 // Used by the SPLIT diagnostic to tell whether the GPU streebog kernel or the second hash
 // of the pair (keccak / haval) is the one diverging.
-extern "C" void megamec_gost512_cpu(void *out64, const void *in64)
-{
-    sph_gost512_context c;
-    sph_gost512_init(&c);
-    sph_gost512(&c, in64, 64);
-    sph_gost512_close(&c, out64);
-}
 
 // ---------- GPU hash dispatch for rounds 1-22 ----------
 // Each permutation value maps to one or two GPU kernel calls on d_hash
@@ -613,25 +606,14 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
         std::next_permutation(permutation_3 + HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2,
                               permutation_3 + HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2 + HASH_FUNC_COUNT_3);
 
-    if (opt_debug)
-    {
-        gpulog(LOG_DEBUG, thr_id, "MEGAMEC timestamp=%u steps=%u/%u/%u",
-            timestamp, steps_1, steps_2, steps_3);
-        gpulog(LOG_DEBUG, thr_id, "MEGAMEC perm1: %u-%u-%u-%u-%u-%u-%u-%u",
-            permutation_1[0], permutation_1[1], permutation_1[2], permutation_1[3],
-            permutation_1[4], permutation_1[5], permutation_1[6], permutation_1[7]);
-    }
+    
 
     // Round 0: always blake512 on 80-byte header
     quark_blake512_cpu_setBlock_80(thr_id, endiandata);
     cuda_check_cpu_setTarget(ptarget);
 
-    if (opt_debug)
-        gpulog(LOG_DEBUG, thr_id, "MEGAMEC scan enter thr=%d ts=%u throughput=%u max_nonce=%08x",
-            thr_id, timestamp, throughput, max_nonce);
+    
 
-    static int dbgcnt[MAX_GPUS] = { 0 };
-    int dbg = (opt_debug && dbgcnt[thr_id] < 4);
 
     do
     {
@@ -659,230 +641,6 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
         // located: if the GPU hash of slot s equals the CPU hash of a DIFFERENT slot
         // q, the GPU slot->nonce mapping is shifted (indexing bug); if NO slot in the
         // batch matches, the GPU computation itself is wrong for that slot.
-        if (dbg) {
-            uint32_t gh[16];
-            uint32_t vh[8];
-            uint32_t ed[20];
-            static uint32_t badslots[32];
-            static uint32_t fb_gh[16], fb_vh[8], fb_slot = 0;
-            // Sample 32 contiguous spans of 64 slots each (covers every warp lane
-            // offset 0..63, unlike a pure stride which would only ever hit lane 0).
-            const uint32_t step = (throughput / 32) ? (throughput / 32) : 1;
-            const uint32_t span = 64;
-            int total = 0, bad = 0, nshow = 0;
-            uint32_t firstbad = 0, lastbad = 0;
-
-            // One full-batch CPU hash table (8 uint32 per slot), built once.
-            static uint32_t *cpu_tab = NULL;
-            if (cpu_tab == NULL)
-                cpu_tab = new uint32_t[(size_t)throughput * 8];
-            if (cpu_tab != NULL) {
-                memcpy(ed, endiandata, sizeof(ed));
-                for (uint32_t q = 0; q < throughput; q++) {
-                    be32enc(&ed[19], pdata[19] + q);
-                    megamechash(&cpu_tab[(size_t)q * 8], ed);
-                }
-            }
-
-            memcpy(ed, endiandata, sizeof(ed));
-            for (uint32_t base = 0; base < throughput; base += step) {
-                for (uint32_t k = 0; k < span && base + k < throughput; k++) {
-                    const uint32_t s = base + k;
-                    cudaMemcpy(gh, d_hash[thr_id] + (s << 4), 64, cudaMemcpyDeviceToHost);
-                    be32enc(&ed[19], pdata[19] + s);
-                    megamechash(vh, ed);
-                    total++;
-                    if (memcmp(vh, gh, 32) != 0) {
-                        if (!bad) {
-                            firstbad = s;
-                            if (nshow == 0) {
-                                fb_slot = s;
-                                memcpy(fb_gh, gh, sizeof(fb_gh));
-                                memcpy(fb_vh, vh, sizeof(fb_vh));
-                            }
-                        }
-                        lastbad = s;
-                        bad++;
-                        if (nshow < 32) badslots[nshow++] = s;
-                    }
-                }
-            }
-            gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP start=%08x thr=%u step=%u span=%u bad=%d/%d first=%u last=%u target7=%08x",
-                pdata[19], throughput, step, span, bad, total, firstbad, lastbad, ptarget[7]);
-            if (bad) {
-                gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD slot=%u nonce=%08x", fb_slot, pdata[19] + fb_slot);
-                gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD GPU: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
-                    fb_gh[0], fb_gh[1], fb_gh[2], fb_gh[3], fb_gh[4], fb_gh[5], fb_gh[6], fb_gh[7],
-                    fb_gh[8], fb_gh[9], fb_gh[10], fb_gh[11], fb_gh[12], fb_gh[13], fb_gh[14], fb_gh[15]);
-                gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP FIRSTBAD CPU: %08x %08x %08x %08x %08x %08x %08x %08x",
-                    fb_vh[0], fb_vh[1], fb_vh[2], fb_vh[3], fb_vh[4], fb_vh[5], fb_vh[6], fb_vh[7]);
-                // MAPFIND: find the slot whose CPU hash equals the GPU hash of fb_slot.
-                if (cpu_tab != NULL) {
-                    int found = -1;
-                    for (uint32_t q = 0; q < throughput; q++) {
-                        if (memcmp(&cpu_tab[(size_t)q * 8], fb_gh, 32) == 0) { found = (int)q; break; }
-                    }
-                    if (found >= 0)
-                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC MAPFIND slot=%u -> q=%u (delta=%d)",
-                            fb_slot, (uint32_t)found, found - (int)fb_slot);
-                    else
-                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC MAPFIND slot=%u NO MATCH in batch", fb_slot);
-                }
-
-                // ---- ROUND BISECT: locate the first round where GPU diverges from CPU ----
-                {
-                    uint32_t ed_fb[20];
-                    memcpy(ed_fb, endiandata, sizeof(ed_fb));
-                    be32enc(&ed_fb[19], pdata[19] + fb_slot);
-
-                    uint32_t roundval[23];
-                    roundval[0] = 0;
-                    for (int i = 1; i < HASH_FUNC_COUNT_1; i++) roundval[i] = permutation_1[i];
-                    for (int i = HASH_FUNC_COUNT_1; i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i++) roundval[i] = permutation_2[i];
-                    for (int i = HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i < 23; i++) roundval[i] = permutation_3[i];
-
-                    // ---- ARRAYDIFF: run the whole chain twice and compare EVERY slot ----
-                    // Decisive nondeterminism test. If ndiff > 0 the GPU chain is unstable.
-                    // On a diff, bisect on that slot (guaranteed unstable) instead of fb_slot.
-                    {
-                        static uint32_t *arrA = NULL, *arrB = NULL;
-                        if (arrA == NULL) arrA = new uint32_t[(size_t)throughput * 16];
-                        if (arrB == NULL) arrB = new uint32_t[(size_t)throughput * 16];
-                        if (arrA != NULL && arrB != NULL) {
-                            for (int pass = 0; pass < 2; pass++) {
-                                int oA = 0;
-                                quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
-                                oA++;
-                                for (int i = 1; i < 23; i++)
-                                    megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &oA);
-                                cudaMemcpy(pass ? arrB : arrA, d_hash[thr_id], (size_t)throughput << 6, cudaMemcpyDeviceToHost);
-                            }
-                            uint32_t ndiff = 0, firstdiff = 0xffffffffu;
-                            for (uint32_t s = 0; s < throughput; s++) {
-                                if (memcmp(arrA + ((size_t)s << 4), arrB + ((size_t)s << 4), 64) != 0) {
-                                    if (firstdiff == 0xffffffffu) firstdiff = s;
-                                    ndiff++;
-                                }
-                            }
-                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC ARRAYDIFF ndiff=%u/%u first=%u", ndiff, throughput, firstdiff);
-                            if (ndiff > 0) {
-                                fb_slot = firstdiff;
-                                memcpy(fb_gh, arrA + ((size_t)firstdiff << 4), 64);
-                                be32enc(&ed_fb[19], pdata[19] + fb_slot);
-                                gpulog(LOG_DEBUG, thr_id, "MEGAMEC ARRAYDIFF bisect on unstable slot=%u nonce=%08x", fb_slot, pdata[19] + fb_slot);
-                            }
-                        }
-                    }
-
-                    // (a) does the GPU final hash match the CPU state after RR rounds? (detects truncation)
-                    uint32_t cst[16];
-                    int matchrr = -1;
-                    for (int RR = 0; RR <= 22; RR++) {
-                        megamechash_state(cst, ed_fb, RR);
-                        if (memcmp(cst, fb_gh, 32) == 0) { matchrr = RR; break; }
-                    }
-                    gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDSCAN slot=%u gpu_matches_cpu_round=%d", fb_slot, matchrr);
-
-                    // (b) incremental re-run: find the first round where GPU != CPU (64-byte state)
-                    uint32_t gst[16];
-                    int divr = -1;
-                    for (int r = 0; r <= 22; r++) {
-                        int o2 = 0;
-                        quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
-                        o2++;
-                        for (int i = 1; i <= r; i++)
-                            megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &o2);
-                        cudaMemcpy(gst, d_hash[thr_id] + ((size_t)fb_slot << 4), 64, cudaMemcpyDeviceToHost);
-                        megamechash_state(cst, ed_fb, r);
-                        if (memcmp(gst, cst, 64) != 0) {
-                            divr = r;
-                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV r=%d perm=%u", r, (r == 0) ? 0u : roundval[r]);
-                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV GPU: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
-                                gst[0], gst[1], gst[2], gst[3], gst[4], gst[5], gst[6], gst[7],
-                                gst[8], gst[9], gst[10], gst[11], gst[12], gst[13], gst[14], gst[15]);
-                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV CPU: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
-                                cst[0], cst[1], cst[2], cst[3], cst[4], cst[5], cst[6], cst[7],
-                                cst[8], cst[9], cst[10], cst[11], cst[12], cst[13], cst[14], cst[15]);
-                            break;
-                        }
-                    }
-                    if (divr < 0)
-                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV none (all 23 rounds match)");
-
-                    // ---- RACE TEST: run each prefix TWICE and compare the GPU output with itself ----
-                    {
-                        uint32_t gs1[16], gs2[16];
-                        char rb[256];
-                        int racer = -1;
-                        for (int r = 0; r <= 22 && racer < 0; r++) {
-                            for (int pass = 0; pass < 2; pass++) {
-                                int o4 = 0;
-                                quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
-                                o4++;
-                                for (int i = 1; i <= r; i++)
-                                    megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &o4);
-                                cudaMemcpy(pass ? gs2 : gs1, d_hash[thr_id] + ((size_t)fb_slot << 4), 64, cudaMemcpyDeviceToHost);
-                            }
-                            if (memcmp(gs1, gs2, 64) != 0) {
-                                racer = r;
-                                gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE r=%d perm=%u", r, (r == 0) ? 0u : roundval[r]);
-                                snprintf(rb, sizeof(rb), "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
-                                    gs1[0], gs1[1], gs1[2], gs1[3], gs1[4], gs1[5], gs1[6], gs1[7], gs1[8], gs1[9], gs1[10], gs1[11], gs1[12], gs1[13], gs1[14], gs1[15]);
-                                gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE pass1: %s", rb);
-                                snprintf(rb, sizeof(rb), "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
-                                    gs2[0], gs2[1], gs2[2], gs2[3], gs2[4], gs2[5], gs2[6], gs2[7], gs2[8], gs2[9], gs2[10], gs2[11], gs2[12], gs2[13], gs2[14], gs2[15]);
-                                gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE pass2: %s", rb);
-                            }
-                        }
-                        if (racer < 0)
-                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE none (GPU chain deterministic round by round)");
-                    }
-
-                    // ---- SPLIT: run ONLY the first hash (gost) of the diverging round and compare ----
-                    if (divr > 0 && (roundval[divr] == 5 || roundval[divr] == 19)) {
-                        uint32_t g1[16], c1[16], pre[16];
-                        int os = 0;
-                        quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
-                        os++;
-                        for (int i = 1; i < divr; i++)
-                            megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &os);
-                        if (device_sm[device_map[thr_id]] >= 500)
-                            streebog_hash_64_maxwell(thr_id, throughput, d_hash[thr_id]);
-                        else
-                            streebog_cpu_hash_64(thr_id, throughput, d_hash[thr_id]);
-                        cudaMemcpy(g1, d_hash[thr_id] + ((size_t)fb_slot << 4), 64, cudaMemcpyDeviceToHost);
-                        megamechash_state(pre, ed_fb, divr - 1);
-                        megamec_gost512_cpu(c1, pre);
-                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC SPLIT round=%d perm=%d first=gost match=%d gpu7=%08x cpu7=%08x",
-                            divr, roundval[divr], (memcmp(g1, c1, 64) == 0) ? 1 : 0, g1[7], c1[7]);
-                    }
-
-                    // Restore the correct full-chain result for the share check
-                    int o3 = 0;
-                    quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
-                    o3++;
-                    for (int i = 1; i < 23; i++)
-                        megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &o3);
-
-                    // (c) determinism check: identical re-run of the chain must give identical bytes
-                    cudaMemcpy(gst, d_hash[thr_id] + ((size_t)fb_slot << 4), 64, cudaMemcpyDeviceToHost);
-                    gpulog(LOG_DEBUG, thr_id, "MEGAMEC REPEAT slot=%u same_as_first_run=%d",
-                        fb_slot, (memcmp(gst, fb_gh, 64) == 0) ? 1 : 0);
-                }
-            }
-            {
-                char lb[400];
-                int o = 0;
-                for (int k = 0; k < nshow; k++)
-                    o += snprintf(lb + o, sizeof(lb) - o, "%u ", badslots[k]);
-                gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP badslots: %s", lb);
-            }
-            gpulog(LOG_DEBUG, thr_id, "MEGAMEC SWEEP header: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
-                pdata[0], pdata[1], pdata[2], pdata[3], pdata[4], pdata[5], pdata[6], pdata[7],
-                pdata[8], pdata[9], pdata[10], pdata[11], pdata[12], pdata[13], pdata[14], pdata[15],
-                pdata[16], pdata[17], pdata[18], pdata[19]);
-            dbgcnt[thr_id]++;
-        }
 
         *hashes_done = pdata[19] - first_nonce + throughput;
 
@@ -917,25 +675,7 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
                 gpu_increment_reject(thr_id);
                 if (!opt_quiet)
                     gpulog(LOG_WARNING, thr_id, "MEGAMEC result for %08x does not validate on CPU!", work->nonces[0]);
-                if (opt_debug) {
-                    // Forensic dump: GPU-computed hash for the exact slot the GPU flagged
-                    // vs the CPU-recomputed hash. slot = thread index inside this batch.
-                    uint32_t slot = work->nonces[0] - pdata[19];
-                    gpulog(LOG_DEBUG, thr_id, "MEGAMEC FAILDUMP nonce=%08x slot=%u thr=%u Htarg=%08x cpuHash7=%08x below(target)=%d",
-                        work->nonces[0], slot, throughput, Htarg, vhash[7],
-                        (vhash[7] < Htarg || (vhash[7] == Htarg && fulltest(vhash, ptarget))) ? 1 : 0);
-                    if (slot < throughput) {
-                        uint32_t gh[16];
-                        cudaMemcpy(gh, d_hash[thr_id] + (slot << 4), 64, cudaMemcpyDeviceToHost);
-                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC FAILDUMP GPU hash: %08x %08x %08x %08x %08x %08x %08x %08x | %08x %08x %08x %08x %08x %08x %08x %08x",
-                            gh[0], gh[1], gh[2], gh[3], gh[4], gh[5], gh[6], gh[7],
-                            gh[8], gh[9], gh[10], gh[11], gh[12], gh[13], gh[14], gh[15]);
-                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC FAILDUMP CPU hash: %08x %08x %08x %08x %08x %08x %08x %08x",
-                            vhash[0], vhash[1], vhash[2], vhash[3], vhash[4], vhash[5], vhash[6], vhash[7]);
-                    } else {
-                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC FAILDUMP slot OUT OF RANGE");
-                    }
-                }
+                
                 pdata[19] = work->nonces[0] + 1;
                 continue;
             }
