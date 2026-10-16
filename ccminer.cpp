@@ -1711,6 +1711,7 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		case ALGO_TIMETRAVEL:
 		case ALGO_BITCORE:
 		case ALGO_X16R:
+		case ALGO_MEGAMEC: // megamec pools use the x16r-family 1/256 difficulty scale
 			work_set_target(work, sctx->job.diff / (256.0 * opt_difficulty));
 			break;
 		case ALGO_KECCAK:
