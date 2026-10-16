@@ -129,7 +129,7 @@ static inline uint32_t megamec_timestamp(const void *endiandata)
 
 // ---------- CPU hash (exact port of mega-mec.h) ----------
 
-extern "C" void megamechash(void *output, const void *input)
+extern "C" void megamechash_state(void *out64, const void *input, int stop_round)
 {
     sph_blake512_context     ctx_blake;
     sph_bmw512_context       ctx_bmw;
@@ -197,6 +197,7 @@ extern "C" void megamechash(void *output, const void *input)
 
     // Group 1: rounds 1-7 (permutation_1 values 1-7)
     for (int i = 1; i < HASH_FUNC_COUNT_1; i++) {
+        if (i > stop_round) break;
         toHash = hash[i - 1];
         switch (permutation_1[i]) {
         case 1: // echo → blake
@@ -257,6 +258,7 @@ extern "C" void megamechash(void *output, const void *input)
 
     // Group 2: rounds 8-15 (permutation_2 values 8-15)
     for (int i = HASH_FUNC_COUNT_1; i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i++) {
+        if (i > stop_round) break;
         toHash = hash[i - 1];
         switch (permutation_2[i]) {
         case 8: // whirlpool → cubehash
@@ -326,6 +328,7 @@ extern "C" void megamechash(void *output, const void *input)
     // Group 3: rounds 16-22 (permutation_3 values 16-22)
     for (int i = HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2;
          i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2 + HASH_FUNC_COUNT_3; i++) {
+        if (i > stop_round) break;
         toHash = hash[i - 1];
         switch (permutation_3[i]) {
         case 16: // sha512 → haval
@@ -387,8 +390,16 @@ extern "C" void megamechash(void *output, const void *input)
         }
     }
 
-    // Output: lower 256 bits of hash[22]
-    memcpy(output, hash[22], 32);
+    // Output: full 64-byte state after hash[stop_round]
+    memcpy(out64, hash[stop_round], 64);
+}
+
+// Convenience wrapper: full 23-round megamec hash, lower 256 bits
+extern "C" void megamechash(void *output, const void *input)
+{
+    uint32_t st[16];
+    megamechash_state(st, input, 22);
+    memcpy(output, st, 32);
 }
 
 // ---------- GPU hash dispatch for rounds 1-22 ----------
@@ -694,6 +705,66 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
                             fb_slot, (uint32_t)found, found - (int)fb_slot);
                     else
                         gpulog(LOG_DEBUG, thr_id, "MEGAMEC MAPFIND slot=%u NO MATCH in batch", fb_slot);
+                }
+
+                // ---- ROUND BISECT: locate the first round where GPU diverges from CPU ----
+                {
+                    uint32_t ed_fb[20];
+                    memcpy(ed_fb, endiandata, sizeof(ed_fb));
+                    be32enc(&ed_fb[19], pdata[19] + fb_slot);
+
+                    uint32_t roundval[23];
+                    roundval[0] = 0;
+                    for (int i = 1; i < HASH_FUNC_COUNT_1; i++) roundval[i] = permutation_1[i];
+                    for (int i = HASH_FUNC_COUNT_1; i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i++) roundval[i] = permutation_2[i];
+                    for (int i = HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i < 23; i++) roundval[i] = permutation_3[i];
+
+                    // (a) does the GPU final hash match the CPU state after RR rounds? (detects truncation)
+                    uint32_t cst[16];
+                    int matchrr = -1;
+                    for (int RR = 0; RR <= 22; RR++) {
+                        megamechash_state(cst, ed_fb, RR);
+                        if (memcmp(cst, fb_gh, 32) == 0) { matchrr = RR; break; }
+                    }
+                    gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDSCAN slot=%u gpu_matches_cpu_round=%d", fb_slot, matchrr);
+
+                    // (b) incremental re-run: find the first round where GPU != CPU (64-byte state)
+                    uint32_t gst[16];
+                    int divr = -1;
+                    for (int r = 0; r <= 22; r++) {
+                        int o2 = 0;
+                        quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
+                        o2++;
+                        for (int i = 1; i <= r; i++)
+                            megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &o2);
+                        cudaMemcpy(gst, d_hash[thr_id] + ((size_t)fb_slot << 4), 64, cudaMemcpyDeviceToHost);
+                        megamechash_state(cst, ed_fb, r);
+                        if (memcmp(gst, cst, 64) != 0) {
+                            divr = r;
+                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV r=%d perm=%u", r, (r == 0) ? 0u : roundval[r]);
+                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV GPU: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                                gst[0], gst[1], gst[2], gst[3], gst[4], gst[5], gst[6], gst[7],
+                                gst[8], gst[9], gst[10], gst[11], gst[12], gst[13], gst[14], gst[15]);
+                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV CPU: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                                cst[0], cst[1], cst[2], cst[3], cst[4], cst[5], cst[6], cst[7],
+                                cst[8], cst[9], cst[10], cst[11], cst[12], cst[13], cst[14], cst[15]);
+                            break;
+                        }
+                    }
+                    if (divr < 0)
+                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV none (all 23 rounds match)");
+
+                    // Restore the correct full-chain result for the share check
+                    int o3 = 0;
+                    quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
+                    o3++;
+                    for (int i = 1; i < 23; i++)
+                        megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &o3);
+
+                    // (c) determinism check: identical re-run of the chain must give identical bytes
+                    cudaMemcpy(gst, d_hash[thr_id] + ((size_t)fb_slot << 4), 64, cudaMemcpyDeviceToHost);
+                    gpulog(LOG_DEBUG, thr_id, "MEGAMEC REPEAT slot=%u same_as_first_run=%d",
+                        fb_slot, (memcmp(gst, fb_gh, 64) == 0) ? 1 : 0);
                 }
             }
             {
