@@ -84,6 +84,7 @@ extern void x15_whirlpool_cpu_hash_64(int thr_id, uint32_t threads, uint32_t sta
 extern void x17_sha512_cpu_hash_64(int thr_id, uint32_t threads, uint32_t startNounce, uint32_t *d_hash);
 extern void x17_haval256_cpu_hash_64(int thr_id, uint32_t threads, uint32_t startNounce, uint32_t *d_hash, const int outlen);
 extern void streebog_cpu_hash_64(int thr_id, uint32_t threads, uint32_t *d_hash);
+extern void streebog_hash_64_maxwell(int thr_id, uint32_t threads, uint32_t *d_hash);
 
 // free
 extern void quark_blake512_cpu_free(int thr_id);
@@ -425,7 +426,12 @@ static void megamec_gpu_hash_pair(int thr_id, uint32_t throughput, uint32_t star
         quark_jh512_cpu_hash_64(thr_id, throughput, startNounce, NULL, d_hash, (*order)++);
         break;
     case 5: // gost → keccak
-        streebog_cpu_hash_64(thr_id, throughput, d_hash);
+        // streebog: on modern GPUs use the project's default (maxwell-tuned) kernel,
+        // exactly like sib.cu/phi.cu do; the plain kernel is only the compat fallback.
+        if (device_sm[device_map[thr_id]] >= 500)
+            streebog_hash_64_maxwell(thr_id, throughput, d_hash);
+        else
+            streebog_cpu_hash_64(thr_id, throughput, d_hash);
         quark_keccak512_cpu_hash_64(thr_id, throughput, startNounce, NULL, d_hash, (*order)++);
         break;
     case 6: // fugue → skein
@@ -480,7 +486,12 @@ static void megamec_gpu_hash_pair(int thr_id, uint32_t throughput, uint32_t star
         x13_hamsi512_cpu_hash_64(thr_id, throughput, startNounce, NULL, d_hash, (*order)++);
         break;
     case 19: // gost → haval
-        streebog_cpu_hash_64(thr_id, throughput, d_hash);
+        // streebog: on modern GPUs use the project's default (maxwell-tuned) kernel,
+        // exactly like sib.cu/phi.cu do; the plain kernel is only the compat fallback.
+        if (device_sm[device_map[thr_id]] >= 500)
+            streebog_hash_64_maxwell(thr_id, throughput, d_hash);
+        else
+            streebog_cpu_hash_64(thr_id, throughput, d_hash);
         x17_haval256_cpu_hash_64(thr_id, throughput, startNounce, d_hash, 256);
         break;
     case 20: // cubehash → sha512
