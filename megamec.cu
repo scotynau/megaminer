@@ -719,6 +719,39 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
                     for (int i = HASH_FUNC_COUNT_1; i < HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i++) roundval[i] = permutation_2[i];
                     for (int i = HASH_FUNC_COUNT_1 + HASH_FUNC_COUNT_2; i < 23; i++) roundval[i] = permutation_3[i];
 
+                    // ---- ARRAYDIFF: run the whole chain twice and compare EVERY slot ----
+                    // Decisive nondeterminism test. If ndiff > 0 the GPU chain is unstable.
+                    // On a diff, bisect on that slot (guaranteed unstable) instead of fb_slot.
+                    {
+                        static uint32_t *arrA = NULL, *arrB = NULL;
+                        if (arrA == NULL) arrA = new uint32_t[(size_t)throughput * 16];
+                        if (arrB == NULL) arrB = new uint32_t[(size_t)throughput * 16];
+                        if (arrA != NULL && arrB != NULL) {
+                            for (int pass = 0; pass < 2; pass++) {
+                                int oA = 0;
+                                quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
+                                oA++;
+                                for (int i = 1; i < 23; i++)
+                                    megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &oA);
+                                cudaMemcpy(pass ? arrB : arrA, d_hash[thr_id], (size_t)throughput << 6, cudaMemcpyDeviceToHost);
+                            }
+                            uint32_t ndiff = 0, firstdiff = 0xffffffffu;
+                            for (uint32_t s = 0; s < throughput; s++) {
+                                if (memcmp(arrA + ((size_t)s << 4), arrB + ((size_t)s << 4), 64) != 0) {
+                                    if (firstdiff == 0xffffffffu) firstdiff = s;
+                                    ndiff++;
+                                }
+                            }
+                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC ARRAYDIFF ndiff=%u/%u first=%u", ndiff, throughput, firstdiff);
+                            if (ndiff > 0) {
+                                fb_slot = firstdiff;
+                                memcpy(fb_gh, arrA + ((size_t)firstdiff << 4), 64);
+                                be32enc(&ed_fb[19], pdata[19] + fb_slot);
+                                gpulog(LOG_DEBUG, thr_id, "MEGAMEC ARRAYDIFF bisect on unstable slot=%u nonce=%08x", fb_slot, pdata[19] + fb_slot);
+                            }
+                        }
+                    }
+
                     // (a) does the GPU final hash match the CPU state after RR rounds? (detects truncation)
                     uint32_t cst[16];
                     int matchrr = -1;
