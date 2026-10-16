@@ -403,6 +403,17 @@ extern "C" void megamechash(void *output, const void *input)
     memcpy(output, st, 32);
 }
 
+// CPU reference for the FIRST hash of the case-5/case-19 pair (gost/streebog) over 64 bytes.
+// Used by the SPLIT diagnostic to tell whether the GPU streebog kernel or the second hash
+// of the pair (keccak / haval) is the one diverging.
+extern "C" void megamec_gost512_cpu(void *out64, const void *in64)
+{
+    sph_gost512_context c;
+    sph_gost512_init(&c);
+    sph_gost512(&c, in64, 64);
+    sph_gost512_close(&c, out64);
+}
+
 // ---------- GPU hash dispatch for rounds 1-22 ----------
 // Each permutation value maps to one or two GPU kernel calls on d_hash
 
@@ -825,6 +836,25 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
                         }
                         if (racer < 0)
                             gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE none (GPU chain deterministic round by round)");
+                    }
+
+                    // ---- SPLIT: run ONLY the first hash (gost) of the diverging round and compare ----
+                    if (divr > 0 && (roundval[divr] == 5 || roundval[divr] == 19)) {
+                        uint32_t g1[16], c1[16], pre[16];
+                        int os = 0;
+                        quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
+                        os++;
+                        for (int i = 1; i < divr; i++)
+                            megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &os);
+                        if (device_sm[device_map[thr_id]] >= 500)
+                            streebog_hash_64_maxwell(thr_id, throughput, d_hash[thr_id]);
+                        else
+                            streebog_cpu_hash_64(thr_id, throughput, d_hash[thr_id]);
+                        cudaMemcpy(g1, d_hash[thr_id] + ((size_t)fb_slot << 4), 64, cudaMemcpyDeviceToHost);
+                        megamechash_state(pre, ed_fb, divr - 1);
+                        megamec_gost512_cpu(c1, pre);
+                        gpulog(LOG_DEBUG, thr_id, "MEGAMEC SPLIT round=%d perm=%d first=gost match=%d gpu7=%08x cpu7=%08x",
+                            divr, roundval[divr], (memcmp(g1, c1, 64) == 0) ? 1 : 0, g1[7], c1[7]);
                     }
 
                     // Restore the correct full-chain result for the share check
