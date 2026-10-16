@@ -754,6 +754,35 @@ extern "C" int scanhash_megamec(int thr_id, struct work* work, uint32_t max_nonc
                     if (divr < 0)
                         gpulog(LOG_DEBUG, thr_id, "MEGAMEC ROUNDDIV none (all 23 rounds match)");
 
+                    // ---- RACE TEST: run each prefix TWICE and compare the GPU output with itself ----
+                    {
+                        uint32_t gs1[16], gs2[16];
+                        char rb[256];
+                        int racer = -1;
+                        for (int r = 0; r <= 22 && racer < 0; r++) {
+                            for (int pass = 0; pass < 2; pass++) {
+                                int o4 = 0;
+                                quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
+                                o4++;
+                                for (int i = 1; i <= r; i++)
+                                    megamec_gpu_hash_pair(thr_id, throughput, pdata[19], d_hash[thr_id], roundval[i], &o4);
+                                cudaMemcpy(pass ? gs2 : gs1, d_hash[thr_id] + ((size_t)fb_slot << 4), 64, cudaMemcpyDeviceToHost);
+                            }
+                            if (memcmp(gs1, gs2, 64) != 0) {
+                                racer = r;
+                                gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE r=%d perm=%u", r, (r == 0) ? 0u : roundval[r]);
+                                snprintf(rb, sizeof(rb), "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                                    gs1[0], gs1[1], gs1[2], gs1[3], gs1[4], gs1[5], gs1[6], gs1[7], gs1[8], gs1[9], gs1[10], gs1[11], gs1[12], gs1[13], gs1[14], gs1[15]);
+                                gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE pass1: %s", rb);
+                                snprintf(rb, sizeof(rb), "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                                    gs2[0], gs2[1], gs2[2], gs2[3], gs2[4], gs2[5], gs2[6], gs2[7], gs2[8], gs2[9], gs2[10], gs2[11], gs2[12], gs2[13], gs2[14], gs2[15]);
+                                gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE pass2: %s", rb);
+                            }
+                        }
+                        if (racer < 0)
+                            gpulog(LOG_DEBUG, thr_id, "MEGAMEC RACE none (GPU chain deterministic round by round)");
+                    }
+
                     // Restore the correct full-chain result for the share check
                     int o3 = 0;
                     quark_blake512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]);
