@@ -286,7 +286,7 @@ void x11_echo512_gpu_hash_64(uint32_t threads, uint32_t startNounce, uint64_t *g
 	__shared__ uint32_t sharedMemory[1024];
 
 	echo_gpu_init(sharedMemory);
-	__threadfence_block();
+	__syncthreads(); // barrier: the AES tables are filled cooperatively, must be complete before use
 
 	uint32_t thread = (blockDim.x * blockIdx.x + threadIdx.x);
 	if (thread < threads)
