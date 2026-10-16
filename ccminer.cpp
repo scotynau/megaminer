@@ -869,6 +869,13 @@ int share_result(int result, int pooln, double sharediff, const char *reason)
 			check_dups = true;
 			g_work_time = 0;
 		}
+		// The pool already retired the job this share referenced (a race with
+		// its vardiff/job refresh): resync promptly instead of just logging.
+		if (strncasecmp(reason, "Invalid job id", 14) == 0) {
+			g_work_time = 0;
+			restart_threads();
+		}
+
 	}
 	return 1;
 }
@@ -984,6 +991,13 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 			check_dups = true;
 			be32enc(&ntime, work->data[17]);
 			be32enc(&nonce, work->data[19]);
+			break;
+		case ALGO_MEGAMEC:
+			// megamec is a slow algo but our scan restarts after every share, so the
+			// same nonce can be re-found: make sure the duplicate guard always runs.
+			check_dups = true;
+			le32enc(&ntime, work->data[17]);
+			le32enc(&nonce, work->data[19]);
 			break;
 		default:
 			le32enc(&ntime, work->data[17]);
