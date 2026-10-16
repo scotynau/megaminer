@@ -227,7 +227,7 @@ void streebog_gpu_hash_64_maxwell(uint64_t *g_hash)
 	*(uint2x4*)&hash[0] = __ldg4((uint2x4*)&inout[0]);
 	*(uint2x4*)&hash[4] = __ldg4((uint2x4*)&inout[4]);
 
-	__threadfence_block();
+	__syncthreads(); // real barrier: GOST_FS reads the whole 8x256 shared LUT that was filled cooperatively above
 
 	K0[0] = vectorize(0x74a5d4ce2efc83b3);
 
