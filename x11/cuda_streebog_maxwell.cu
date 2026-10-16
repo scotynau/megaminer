@@ -288,7 +288,10 @@ void streebog_gpu_hash_64_maxwell(uint64_t *g_hash)
 
 	GOST_FS(shared, buf,K0); // K = F(h)
 
-	hash[7]+= vectorize(0x0100000000000000);
+	{   unsigned char *pb = (unsigned char *)&hash[0];
+	    for (int bi = 63; bi >= 0; bi--) { if (++pb[bi] != 0) break; }   /* Sigma += 1 at byte 63 (LSB), carry toward byte 0 */
+	}
+
 
 	#pragma unroll 8
 	for(int j=0;j<8;j++)

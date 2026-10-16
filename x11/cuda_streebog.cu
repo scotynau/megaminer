@@ -763,7 +763,10 @@ void streebog_gpu_hash_64(uint64_t *g_hash)
 
 	GOST_FS(buf,K0, shared); // K = F(h)
 
-	hash[7]+= vectorize(0x0100000000000000);
+	{   unsigned char *pb = (unsigned char *)&hash[0];
+	    for (int bi = 63; bi >= 0; bi--) { if (++pb[bi] != 0) break; }   /* Sigma += 1 at byte 63 (LSB), carry toward byte 0 */
+	}
+
 
 	#pragma unroll 8
 	for(uint32_t j=0;j<8;j++)
@@ -935,7 +938,10 @@ void streebog_gpu_hash_64_final(uint64_t *g_hash, uint32_t* resNonce)
 
 	GOST_FS(buf,K0, shared); // K = F(h)
 
-	hash[7]+= vectorize(0x0100000000000000);
+	{   unsigned char *pb = (unsigned char *)&hash[0];
+	    for (int bi = 63; bi >= 0; bi--) { if (++pb[bi] != 0) break; }   /* Sigma += 1 at byte 63 (LSB), carry toward byte 0 */
+	}
+
 
 	#pragma unroll 8
 	for(uint32_t j=0;j<8;j++)
