@@ -134,14 +134,14 @@ NVCC="nvcc"
 
 if test -n "$with_cuda" ; then
   CUDA_INCLUDES="-I$with_cuda/include"
-  CUDA_LIBS="-lcudart"
+  CUDA_LIBS="-lcudart_static -lpthread -ldl -lrt"
   CUDA_LDFLAGS="-L$with_cuda/lib$SUFFIX"
   if test -x "$with_cuda/bin/nvcc" ; then
     NVCC="$with_cuda/bin/nvcc"
   fi
 else
   CUDA_INCLUDES="-I/usr/local/cuda/include"
-  CUDA_LIBS="-lcudart -static-libstdc++"
+  CUDA_LIBS="-lcudart_static -lpthread -ldl -lrt -static-libstdc++"
   CUDA_LDFLAGS="-L/usr/local/cuda/lib$SUFFIX"
 fi
 
