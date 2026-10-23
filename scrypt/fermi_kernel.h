@@ -20,6 +20,11 @@ public:
 	virtual int get_minor_version() { return 0; }
 	virtual int max_warps_per_block() { return 16; };
 	virtual int get_texel_width() { return 4; };
+#if defined(CUDART_VERSION) && CUDART_VERSION >= 12000
+	// The legacy texture-reference API is stubbed out from CUDA 12 onwards,
+	// so the texture cache paths would read zeroes. Refuse them loudly.
+	virtual bool no_textures() { return true; }
+#endif
 	virtual bool support_lookup_gap() { return true; }
 	virtual cudaSharedMemConfig shared_mem_config() { return cudaSharedMemBankSizeFourByte; }
 	virtual cudaFuncCache cache_config() { return cudaFuncCachePreferShared; }

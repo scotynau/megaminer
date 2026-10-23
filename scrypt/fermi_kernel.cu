@@ -41,8 +41,8 @@ __constant__ uint32_t* c_V[TOTAL_WARP_LIMIT];
 struct DummyTex { int normalized; int filterMode; int addressMode[2]; };
 __device__ static DummyTex texRef1D_4_V;
 __device__ static DummyTex texRef2D_4_V;
-static __device__ uint4 tex1Dfetch(DummyTex tex, unsigned int loc) { return make_uint4(0,0,0,0); }
-static __device__ uint4 tex1Dfetch(DummyTex tex, long loc) { return make_uint4(0,0,0,0); }
+template <typename T>
+static __device__ uint4 tex1Dfetch(DummyTex tex, T loc) { return make_uint4(0,0,0,0); }
 static __device__ uint4 tex2D(DummyTex tex, float x, float y) { return make_uint4(0,0,0,0); }
 #else
 texture<uint4, 1, cudaReadModeElementType> texRef1D_4_V;
