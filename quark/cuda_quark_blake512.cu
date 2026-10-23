@@ -298,20 +298,23 @@ void quark_blake512_cpu_setBlock_80(int thr_id, uint32_t *endiandata)
 {
 #ifdef SP_KERNEL
 	int dev_id = device_map[thr_id];
-	if (device_sm[dev_id] >= 500 && cuda_arch[dev_id] >= 500)
+	if (device_sm[dev_id] >= 50)
 		quark_blake512_cpu_setBlock_80_sp(thr_id, (uint64_t*) endiandata);
 	else
 #endif
 	{
 		uint64_t message[16];
+		uint64_t *pdata = (uint64_t*) endiandata;
 
-		memcpy(message, endiandata, 80);
-		message[10] = 0x80;
+		// Match SP kernel padding exactly: cuda_swab64 + SP padding values
+		for (int i = 0; i < 10; i++)
+			message[i] = cuda_swab64(pdata[i]);
+		message[10] = 0x8000000000000000ull;
 		message[11] = 0;
 		message[12] = 0;
-		message[13] = 0x0100000000000000ull;
+		message[13] = 1;
 		message[14] = 0;
-		message[15] = 0x8002000000000000ull; // 0x280
+		message[15] = 0x280ull; // 640 bits = 80 bytes
 
 		cudaMemcpyToSymbol(c_PaddedMessage80, message, sizeof(message), 0, cudaMemcpyHostToDevice);
 	}
