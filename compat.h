@@ -3,6 +3,7 @@
 
 #ifdef WIN32
 
+#include <winsock2.h>
 #include <windows.h>
 #include <time.h>
 
@@ -45,7 +46,9 @@ static __inline int setpriority(int which, int who, int prio)
 }
 
 #ifdef _MSC_VER
+#if _MSC_VER < 1900
 #define snprintf(...) _snprintf(__VA_ARGS__)
+#endif
 #define strdup(...) _strdup(__VA_ARGS__)
 #define strncasecmp(x,y,z) _strnicmp(x,y,z)
 #define strcasecmp(x,y) _stricmp(x,y)

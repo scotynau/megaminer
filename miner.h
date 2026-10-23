@@ -6,11 +6,13 @@
 #define cudaThreadSynchronize cudaDeviceSynchronize
 #endif
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+#ifdef WIN32
+#include "compat/ccminer-config.h"
+#undef HAVE_ALLOCA_H
+#undef HAVE_SYSLOG_H
+#else
 #include <ccminer-config.h>
+#endif
 
 #include <stdbool.h>
 #include <inttypes.h>
@@ -18,11 +20,6 @@ extern "C" {
 #include <pthread.h>
 #include <jansson.h>
 #include <curl/curl.h>
-
-#ifdef _MSC_VER
-#undef HAVE_ALLOCA_H
-#undef HAVE_SYSLOG_H
-#endif
 
 #ifdef STDC_HEADERS
 # include <stdlib.h>
@@ -49,6 +46,10 @@ void *alloca (size_t);
 #endif
 
 #include "compat.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #ifdef __INTELLISENSE__
 /* should be in stdint.h but... */
