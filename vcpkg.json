@@ -1,0 +1,14 @@
+{
+  "name": "megaminer",
+  "version-string": "2.3.1",
+  "dependencies": [
+    {
+      "name": "curl",
+      "features": [
+        "openssl"
+      ]
+    },
+    "openssl",
+    "zlib"
+  ]
+}
