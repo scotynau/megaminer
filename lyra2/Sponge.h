@@ -24,6 +24,10 @@
 
 #include <stdint.h>
 
+#ifdef _MSC_VER
+#include <intrin.h> /* _rotr64 */
+#endif
+
 /* Blake2b IV Array */
 static const uint64_t blake2b_IV[8] =
 {

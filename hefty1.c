@@ -34,7 +34,7 @@
 
 #include "hefty1.h"
 
-#ifdef WIN32
+#if defined(WIN32) && defined(_MSC_VER) && _MSC_VER < 1900
 #define inline __inline
 #endif
 

@@ -700,6 +700,13 @@ extern "C" int BN_bn2mpi(const BIGNUM *a, unsigned char *d)
  * 3. libcurl Compatibility Layer (Winsock2 Stratum + WinHTTP RPC)
  * ========================================================================= */
 
+/* MSVC implements va_arg as a macro, so a function-pointer type with commas
+   must be named through a typedef. */
+typedef size_t (*cc_write_cb)(void *, size_t, size_t, void *);
+typedef curl_socket_t (*cc_opensocket_cb)(void *, curlsocktype, struct curl_sockaddr *);
+typedef int (*cc_sockopt_cb)(void *, curl_socket_t, curlsocktype);
+typedef int (*cc_debug_cb)(CURL *, curl_infotype, char *, size_t, void *);
+
 struct CurlEasyHandle {
 	char url[2048];
 	char proxy[1024];
@@ -726,15 +733,15 @@ struct CurlEasyHandle {
 	long upload;
 	long infilesize;
 
-	size_t (*writefunction)(void *, size_t, size_t, void *);
+	cc_write_cb writefunction;
 	void *writedata;
-	size_t (*readfunction)(void *, size_t, size_t, void *);
+	cc_write_cb readfunction;
 	void *readdata;
-	curl_socket_t (*opensocketfunction)(void *, curlsocktype, struct curl_sockaddr *);
+	cc_opensocket_cb opensocketfunction;
 	void *opensocketdata;
-	int (*sockoptfunction)(void *, curl_socket_t, curlsocktype);
+	cc_sockopt_cb sockoptfunction;
 	void *sockoptdata;
-	int (*debugfunction)(CURL *, curl_infotype, char *, size_t, void *);
+	cc_debug_cb debugfunction;
 	void *debugdata;
 
 	struct curl_slist *httpheader;
@@ -934,31 +941,31 @@ extern "C" CURLcode curl_easy_setopt(CURL *curl, CURLoption option, ...)
 		h->infilesize = va_arg(ap, long);
 		break;
 	case CURLOPT_WRITEFUNCTION:
-		h->writefunction = va_arg(ap, size_t (*)(void *, size_t, size_t, void *));
+		h->writefunction = va_arg(ap, cc_write_cb);
 		break;
 	case CURLOPT_WRITEDATA:
 		h->writedata = va_arg(ap, void *);
 		break;
 	case CURLOPT_READFUNCTION:
-		h->readfunction = va_arg(ap, size_t (*)(void *, size_t, size_t, void *));
+		h->readfunction = va_arg(ap, cc_write_cb);
 		break;
 	case CURLOPT_READDATA:
 		h->readdata = va_arg(ap, void *);
 		break;
 	case CURLOPT_OPENSOCKETFUNCTION:
-		h->opensocketfunction = va_arg(ap, curl_socket_t (*)(void *, curlsocktype, struct curl_sockaddr *));
+		h->opensocketfunction = va_arg(ap, cc_opensocket_cb);
 		break;
 	case CURLOPT_OPENSOCKETDATA:
 		h->opensocketdata = va_arg(ap, void *);
 		break;
 	case CURLOPT_SOCKOPTFUNCTION:
-		h->sockoptfunction = va_arg(ap, int (*)(void *, curl_socket_t, curlsocktype));
+		h->sockoptfunction = va_arg(ap, cc_sockopt_cb);
 		break;
 	case CURLOPT_SOCKOPTDATA:
 		h->sockoptdata = va_arg(ap, void *);
 		break;
 	case CURLOPT_DEBUGFUNCTION:
-		h->debugfunction = va_arg(ap, int (*)(CURL *, curl_infotype, char *, size_t, void *));
+		h->debugfunction = va_arg(ap, cc_debug_cb);
 		break;
 	case CURLOPT_DEBUGDATA:
 		h->debugdata = va_arg(ap, void *);

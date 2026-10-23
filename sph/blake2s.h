@@ -19,7 +19,11 @@
 
 #if defined(_MSC_VER)
 #include <inttypes.h>
+/* The Universal CRT (VS2015+) defines inline itself; macroizing it makes the
+   C++ standard library emit a fatal #error. */
+#if _MSC_VER < 1900
 #define inline __inline
+#endif
 #define ALIGN(x) __declspec(align(x))
 #else
 #define ALIGN(x) __attribute__((aligned(x)))

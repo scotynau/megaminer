@@ -22,7 +22,11 @@
    supported. */
 
 #ifdef _MSC_VER
+/* The Universal CRT (VS2015+) defines inline itself; macroizing it makes the
+   C++ standard library emit a fatal #error. */
+#if _MSC_VER < 1900
 #define inline __inline
+#endif
 #if !defined(HAVE_STRUCT_TIMESPEC) && _MSC_VER >= 1900
 #define HAVE_STRUCT_TIMESPEC
 #endif

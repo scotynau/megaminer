@@ -61,7 +61,7 @@
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;CURL_STATICLIB;HAVE_STRUCT_TIMESPEC;OPENSSL_SUPPRESS_DEPRECATED;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;USE_WRAPNVML;SCRYPT_KECCAK512;SCRYPT_CHACHA;SCRYPT_CHOOSE_COMPILETIME;cudaThreadSynchronize=cudaDeviceSynchronize;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;CURL_STATICLIB;HAVE_STRUCT_TIMESPEC;OPENSSL_SUPPRESS_DEPRECATED;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_STD_BYTE=0;USE_WRAPNVML;SCRYPT_KECCAK512;SCRYPT_CHACHA;SCRYPT_CHOOSE_COMPILETIME;cudaThreadSynchronize=cudaDeviceSynchronize;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>.;compat;compat\curl-for-windows\curl\include;compat\jansson;compat\getopt;compat\pthreads;compat\curl-for-windows\openssl\openssl\include;compat\curl-for-windows\zlib;%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir)</AdditionalIncludeDirectories>
       <EnableParallelCodeGeneration>true</EnableParallelCodeGeneration>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -83,7 +83,7 @@
       <Keep>true</Keep>
       <CodeGeneration>compute_75,sm_75;compute_86,sm_86;compute_89,sm_89;compute_120,sm_120</CodeGeneration>
       <Include>.;compat;compat\curl-for-windows\curl\include;compat\jansson;compat\getopt;compat\pthreads;compat\curl-for-windows\openssl\openssl\include;compat\curl-for-windows\zlib</Include>
-      <AdditionalOptions>-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -DCURL_STATICLIB -DHAVE_STRUCT_TIMESPEC -DOPENSSL_SUPPRESS_DEPRECATED %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -DCURL_STATICLIB -DHAVE_STRUCT_TIMESPEC -DOPENSSL_SUPPRESS_DEPRECATED -D_HAS_STD_BYTE=0 %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -92,7 +92,7 @@
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;CURL_STATICLIB;HAVE_STRUCT_TIMESPEC;OPENSSL_SUPPRESS_DEPRECATED;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;USE_WRAPNVML;SCRYPT_KECCAK512;SCRYPT_CHACHA;SCRYPT_CHOOSE_COMPILETIME;cudaThreadSynchronize=cudaDeviceSynchronize;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;CURL_STATICLIB;HAVE_STRUCT_TIMESPEC;OPENSSL_SUPPRESS_DEPRECATED;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_STD_BYTE=0;USE_WRAPNVML;SCRYPT_KECCAK512;SCRYPT_CHACHA;SCRYPT_CHOOSE_COMPILETIME;cudaThreadSynchronize=cudaDeviceSynchronize;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>.;compat;compat\curl-for-windows\curl\include;compat\jansson;compat\getopt;compat\pthreads;compat\curl-for-windows\openssl\openssl\include;compat\curl-for-windows\zlib;%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir)</AdditionalIncludeDirectories>
       <StructMemberAlignment>8Bytes</StructMemberAlignment>
       <EnableParallelCodeGeneration>true</EnableParallelCodeGeneration>
@@ -116,7 +116,7 @@
       <CodeGeneration>compute_75,sm_75;compute_86,sm_86;compute_89,sm_89;compute_120,sm_120</CodeGeneration>
       <Include>.;compat;compat\curl-for-windows\curl\include;compat\jansson;compat\getopt;compat\pthreads;compat\curl-for-windows\openssl\openssl\include;compat\curl-for-windows\zlib</Include>
       <TargetMachinePlatform>64</TargetMachinePlatform>
-      <AdditionalOptions>-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -DCURL_STATICLIB -DHAVE_STRUCT_TIMESPEC -DOPENSSL_SUPPRESS_DEPRECATED %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -DCURL_STATICLIB -DHAVE_STRUCT_TIMESPEC -DOPENSSL_SUPPRESS_DEPRECATED -D_HAS_STD_BYTE=0 %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
     <CudaLink>
       <PerformDeviceLink>false</PerformDeviceLink>
@@ -132,7 +132,7 @@
       <CompileAsManaged>false</CompileAsManaged>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;CURL_STATICLIB;HAVE_STRUCT_TIMESPEC;OPENSSL_SUPPRESS_DEPRECATED;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;USE_WRAPNVML;SCRYPT_KECCAK512;SCRYPT_CHACHA;SCRYPT_CHOOSE_COMPILETIME;cudaThreadSynchronize=cudaDeviceSynchronize;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;CURL_STATICLIB;HAVE_STRUCT_TIMESPEC;OPENSSL_SUPPRESS_DEPRECATED;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_STD_BYTE=0;USE_WRAPNVML;SCRYPT_KECCAK512;SCRYPT_CHACHA;SCRYPT_CHOOSE_COMPILETIME;cudaThreadSynchronize=cudaDeviceSynchronize;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>.;compat;compat\curl-for-windows\curl\include;compat\jansson;compat\getopt;compat\pthreads;compat\curl-for-windows\openssl\openssl\include;compat\curl-for-windows\zlib;%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir)</AdditionalIncludeDirectories>
       <EnableParallelCodeGeneration>true</EnableParallelCodeGeneration>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -157,7 +157,7 @@
       <Keep>true</Keep>
       <CodeGeneration>compute_75,sm_75;compute_86,sm_86;compute_89,sm_89;compute_120,sm_120</CodeGeneration>
       <Include>.;compat;compat\curl-for-windows\curl\include;compat\jansson;compat\getopt;compat\pthreads;compat\curl-for-windows\openssl\openssl\include;compat\curl-for-windows\zlib</Include>
-      <AdditionalOptions>-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -DCURL_STATICLIB -DHAVE_STRUCT_TIMESPEC -DOPENSSL_SUPPRESS_DEPRECATED --ptxas-options="-O2" --Wno-deprecated-gpu-targets %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -DCURL_STATICLIB -DHAVE_STRUCT_TIMESPEC -DOPENSSL_SUPPRESS_DEPRECATED -D_HAS_STD_BYTE=0 --ptxas-options="-O2" --Wno-deprecated-gpu-targets %(AdditionalOptions)</AdditionalOptions>
       <Optimization>O2</Optimization>
     </CudaCompile>
     <CudaLink>
@@ -177,7 +177,7 @@
       <CompileAsManaged>false</CompileAsManaged>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;CURL_STATICLIB;HAVE_STRUCT_TIMESPEC;OPENSSL_SUPPRESS_DEPRECATED;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;USE_WRAPNVML;SCRYPT_KECCAK512;SCRYPT_CHACHA;SCRYPT_CHOOSE_COMPILETIME;cudaThreadSynchronize=cudaDeviceSynchronize;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;CURL_STATICLIB;HAVE_STRUCT_TIMESPEC;OPENSSL_SUPPRESS_DEPRECATED;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_STD_BYTE=0;USE_WRAPNVML;SCRYPT_KECCAK512;SCRYPT_CHACHA;SCRYPT_CHOOSE_COMPILETIME;cudaThreadSynchronize=cudaDeviceSynchronize;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>.;compat;compat\curl-for-windows\curl\include;compat\jansson;compat\getopt;compat\pthreads;compat\curl-for-windows\openssl\openssl\include;compat\curl-for-windows\zlib;%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir)</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -201,7 +201,7 @@
       <Include>.;compat;compat\curl-for-windows\curl\include;compat\jansson;compat\getopt;compat\pthreads;compat\curl-for-windows\openssl\openssl\include;compat\curl-for-windows\zlib</Include>
       <Optimization>O3</Optimization>
       <TargetMachinePlatform>64</TargetMachinePlatform>
-      <AdditionalOptions>-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -DCURL_STATICLIB -DHAVE_STRUCT_TIMESPEC -DOPENSSL_SUPPRESS_DEPRECATED --Wno-deprecated-gpu-targets %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -DCURL_STATICLIB -DHAVE_STRUCT_TIMESPEC -DOPENSSL_SUPPRESS_DEPRECATED -D_HAS_STD_BYTE=0 --Wno-deprecated-gpu-targets %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
     <CudaLink>
       <Optimization>O3</Optimization>
