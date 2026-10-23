@@ -1083,7 +1083,7 @@ void scrypthash(void* output, const void* input)
 	// no default set with --cputest
 	if (opt_nfactor == 0) opt_nfactor = 9;
 
-	scratchbuf = (uchar*) calloc(4 * 128 + 63, 1UL << (opt_nfactor+1));
+	scratchbuf = (uchar*) calloc(4 * 128 + 63, (size_t)1 << (opt_nfactor + 1));
 
 	memcpy(data, input, 80);
 

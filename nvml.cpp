@@ -1220,15 +1220,15 @@ int nvapi_set_led(unsigned int devNum, int RGB, char *device_name)
 	NvAPI_Status ret;
 	if (strstr(device_name, "Gigabyte GTX 10")) {
 		if (opt_debug)
-			applog(LOG_DEBUG, "GPU %x: Set RGB led to %06x", (int) phys[devNum], RGB);
+			applog(LOG_DEBUG, "GPU %llx: Set RGB led to %06x", (unsigned long long)(uintptr_t) phys[devNum], RGB);
 		return SetGigabyteRGBLogo(devNum, (uint32_t) RGB);
 	} else if (strstr(device_name, "ASUS GTX 10")) {
 		if (opt_debug)
-			applog(LOG_DEBUG, "GPU %x: Set RGB led to %06x", (int) phys[devNum], RGB);
+			applog(LOG_DEBUG, "GPU %llx: Set RGB led to %06x", (unsigned long long)(uintptr_t) phys[devNum], RGB);
 		return SetAsusRGBLogo(devNum, (uint32_t) RGB, !has_rgb_ok);
 	} else if (strstr(device_name, "Zotac GTX 10")) {
 		if (opt_debug)
-			applog(LOG_DEBUG, "GPU %x: Set RGB led to %06x", (int) phys[devNum], RGB);
+			applog(LOG_DEBUG, "GPU %llx: Set RGB led to %06x", (unsigned long long)(uintptr_t) phys[devNum], RGB);
 		return SetZotacRGBLogo(devNum, (uint32_t) RGB);
 	} else {
 		NV_GPU_QUERY_ILLUMINATION_SUPPORT_PARM* illu;
@@ -1243,7 +1243,7 @@ int nvapi_set_led(unsigned int devNum, int RGB, char *device_name)
 			led->Attribute = NV_GPU_IA_LOGO_BRIGHTNESS;
 			NvAPI_GPU_GetIllumination(led);
 			if (opt_debug)
-				applog(LOG_DEBUG, "GPU %x: Led level was %d, set to %d", (int) phys[devNum], led->Value, RGB);
+				applog(LOG_DEBUG, "GPU %llx: Led level was %d, set to %d", (unsigned long long)(uintptr_t) phys[devNum], led->Value, RGB);
 			led->Value = (uint32_t) RGB;
 			ret = NvAPI_GPU_SetIllumination((NV_GPU_SET_ILLUMINATION_PARM*) led);
 			free(led);

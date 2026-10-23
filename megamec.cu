@@ -50,7 +50,7 @@ extern void qubit_luffa512_cpu_init(int thr_id, uint32_t threads);
 extern void x11_luffa512_cpu_init(int thr_id, uint32_t threads);
 extern void x11_cubehash512_cpu_init(int thr_id, uint32_t threads);
 extern void x11_shavite512_cpu_init(int thr_id, uint32_t threads);
-extern void x11_simd512_cpu_init(int thr_id, uint32_t threads);
+int x11_simd512_cpu_init(int thr_id, uint32_t threads);
 extern void x11_echo512_cpu_init(int thr_id, uint32_t threads);
 extern void x13_hamsi512_cpu_init(int thr_id, uint32_t threads);
 extern void x13_fugue512_cpu_init(int thr_id, uint32_t threads);

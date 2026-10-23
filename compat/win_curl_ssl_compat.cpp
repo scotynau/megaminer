@@ -197,6 +197,172 @@ extern "C" int SHA256_Final(unsigned char *md, SHA256_CTX *c)
 	return 1;
 }
 
+extern "C" unsigned char *SHA256(const unsigned char *d, size_t n, unsigned char *md)
+{
+	static unsigned char m[SHA256_DIGEST_LENGTH];
+	SHA256_CTX c;
+
+	if (md == NULL)
+		md = m;
+	SHA256_Init(&c);
+	SHA256_Update(&c, d, n);
+	SHA256_Final(md, &c);
+	memset(&c, 0, sizeof(c));
+	return md;
+}
+
+/* =========================================================================
+ * 1b. OpenSSL SHA-1 Compatibility Layer (SHA1_Init/Update/Final/Transform)
+ * ========================================================================= */
+
+static const uint32_t k_sha1[4] = {
+	0x5A827999UL, 0x6ED9EBA1UL, 0x8F1BBCDCUL, 0xCA62C1D6UL
+};
+
+static inline uint32_t sha_rol32(uint32_t x, unsigned int n)
+{
+	return (x << n) | (x >> (32U - n));
+}
+
+extern "C" void SHA1_Transform(SHA_CTX *c, const unsigned char *data)
+{
+	uint32_t w[80];
+	uint32_t a, b, d, e, f, k, t, cc;
+	int i;
+
+	for (i = 0; i < 16; ++i)
+		w[i] = sha_be32_load(data + (i * 4));
+	for (i = 16; i < 80; ++i)
+		w[i] = sha_rol32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+
+	a = c->h0;
+	b = c->h1;
+	cc = c->h2;
+	d = c->h3;
+	e = c->h4;
+
+	for (i = 0; i < 80; ++i) {
+		if (i < 20) {
+			f = (b & cc) | ((~b) & d);
+			k = k_sha1[0];
+		} else if (i < 40) {
+			f = b ^ cc ^ d;
+			k = k_sha1[1];
+		} else if (i < 60) {
+			f = (b & cc) | (b & d) | (cc & d);
+			k = k_sha1[2];
+		} else {
+			f = b ^ cc ^ d;
+			k = k_sha1[3];
+		}
+		t = sha_rol32(a, 5) + f + e + k + w[i];
+		e = d;
+		d = cc;
+		cc = sha_rol32(b, 30);
+		b = a;
+		a = t;
+	}
+
+	c->h0 += a;
+	c->h1 += b;
+	c->h2 += cc;
+	c->h3 += d;
+	c->h4 += e;
+}
+
+extern "C" int SHA1_Init(SHA_CTX *c)
+{
+	memset(c, 0, sizeof(*c));
+	c->h0 = 0x67452301UL;
+	c->h1 = 0xefcdab89UL;
+	c->h2 = 0x98badcfeUL;
+	c->h3 = 0x10325476UL;
+	c->h4 = 0xc3d2e1f0UL;
+	return 1;
+}
+
+extern "C" int SHA1_Update(SHA_CTX *c, const void *data_, size_t len)
+{
+	if (len == 0)
+		return 1;
+
+	const unsigned char *data = (const unsigned char *)data_;
+	SHA_LONG l = c->Nl + (((SHA_LONG)len) << 3);
+	if (l < c->Nl)
+		c->Nh++;
+	c->Nh += (SHA_LONG)(len >> 29);
+	c->Nl = l;
+
+	unsigned char *p = (unsigned char *)c->data;
+	size_t n = c->num;
+	if (n != 0) {
+		size_t todo = SHA_CBLOCK - n;
+		if (len < todo) {
+			memcpy(p + n, data, len);
+			c->num += (unsigned int)len;
+			return 1;
+		}
+		memcpy(p + n, data, todo);
+		SHA1_Transform(c, p);
+		c->num = 0;
+		memset(p, 0, SHA_CBLOCK);
+		data += todo;
+		len -= todo;
+	}
+
+	while (len >= SHA_CBLOCK) {
+		SHA1_Transform(c, data);
+		data += SHA_CBLOCK;
+		len -= SHA_CBLOCK;
+	}
+
+	if (len > 0) {
+		memcpy(p, data, len);
+		c->num = (unsigned int)len;
+	}
+	return 1;
+}
+
+extern "C" int SHA1_Final(unsigned char *md, SHA_CTX *c)
+{
+	unsigned char *p = (unsigned char *)c->data;
+	size_t n = c->num;
+
+	p[n++] = 0x80;
+	if (n > SHA_LAST_BLOCK) {
+		memset(p + n, 0, SHA_CBLOCK - n);
+		SHA1_Transform(c, p);
+		n = 0;
+	}
+	memset(p + n, 0, SHA_LAST_BLOCK - n);
+	sha_be32_store(p + SHA_CBLOCK - 8, c->Nh);
+	sha_be32_store(p + SHA_CBLOCK - 4, c->Nl);
+	SHA1_Transform(c, p);
+
+	sha_be32_store(md, c->h0);
+	sha_be32_store(md + 4, c->h1);
+	sha_be32_store(md + 8, c->h2);
+	sha_be32_store(md + 12, c->h3);
+	sha_be32_store(md + 16, c->h4);
+
+	memset(c, 0, sizeof(*c));
+	return 1;
+}
+
+extern "C" unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md)
+{
+	static unsigned char m[SHA_DIGEST_LENGTH];
+	SHA_CTX c;
+
+	if (md == NULL)
+		md = m;
+	SHA1_Init(&c);
+	SHA1_Update(&c, d, n);
+	SHA1_Final(md, &c);
+	memset(&c, 0, sizeof(c));
+	return md;
+}
+
 /* =========================================================================
  * 2. OpenSSL BIGNUM Compatibility Layer (for bignum.cpp / bignum_ssl10.hpp)
  * ========================================================================= */
