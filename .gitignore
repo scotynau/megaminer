@@ -71,3 +71,5 @@ compat/curl-for-windows/
 *.cudafe1.c
 *.cudafe2.c
 
+
+.codegraph/
