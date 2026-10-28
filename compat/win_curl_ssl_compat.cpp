@@ -487,6 +487,48 @@ extern "C" int compat_SHA1_Init(compat_SHA1_CTX *ctx)
 	return 1;
 }
 
+static void compat_sha1_transform(compat_SHA1_CTX *ctx, const unsigned char *data)
+{
+	SHA_LONG a, b, c, d, e, t;
+	SHA_LONG W[80];
+	const unsigned char *p = data;
+	int i;
+
+	for (i = 0; i < 16; ++i) {
+		W[i] = (SHA_LONG)p[0] << 24 | (SHA_LONG)p[1] << 16 |
+		       (SHA_LONG)p[2] << 8 | (SHA_LONG)p[3];
+		p += 4;
+	}
+	for (i = 16; i < 80; ++i) {
+		W[i] = SHA_ROT(W[i-3] ^ W[i-8] ^ W[i-14] ^ W[i-16], 1);
+	}
+
+	a = ctx->h0;
+	b = ctx->h1;
+	c = ctx->h2;
+	d = ctx->h3;
+	e = ctx->h4;
+
+	for (i = 0; i < 20; ++i) {
+		t = SHA_ROT(a, 5) + ((b & c) | (~b & d)) + e + W[i] + K1;
+		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
+	}
+	for (i = 20; i < 40; ++i) {
+		t = SHA_ROT(a, 5) + (b ^ c ^ d) + e + W[i] + K2;
+		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
+	}
+	for (i = 40; i < 60; ++i) {
+		t = SHA_ROT(a, 5) + ((b & c) | (b & d) | (c & d)) + e + W[i] + K3;
+		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
+	}
+	for (i = 60; i < 80; ++i) {
+		t = SHA_ROT(a, 5) + (b ^ c ^ d) + e + W[i] + K4;
+		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
+	}
+
+	ctx->h0 += a; ctx->h1 += b; ctx->h2 += c; ctx->h3 += d; ctx->h4 += e;
+}
+
 extern "C" int compat_SHA1_Update(compat_SHA1_CTX *c, const void *data_, size_t len)
 {
 	const unsigned char *data = (const unsigned char *)data_;
@@ -504,7 +546,7 @@ extern "C" int compat_SHA1_Update(compat_SHA1_CTX *c, const void *data_, size_t 
 			return 1;
 		}
 		memcpy(c->data + n, data, todo);
-		compat_compat_sha1_transform(c, c->data);
+		compat_sha1_transform(c, c->data);
 		data += todo;
 		len -= todo;
 		n = 0;
