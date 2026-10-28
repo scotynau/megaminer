@@ -7,6 +7,7 @@
 #define NOMINMAX
 #endif
 
+#define SECURITY_WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>

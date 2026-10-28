@@ -457,7 +457,11 @@ static char *getmeminfo(char *params)
 /**
  * Health check endpoint - returns JSON with miner health status
  */
+#ifndef WIN32
 static void api_health_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
+#else
+static void api_health_endpoint(SOCKETTYPE c, in_addr_t client_ip)
+#endif
 {
 	time_t now = time(NULL);
 	double uptime = difftime(now, startup);
@@ -529,7 +533,11 @@ static void api_health_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
 /**
  * Prometheus metrics endpoint
  */
+#ifndef WIN32
 static void api_metrics_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
+#else
+static void api_metrics_endpoint(SOCKETTYPE c, in_addr_t client_ip)
+#endif
 {
 	time_t now = time(NULL);
 	double uptime = difftime(now, startup);
@@ -1736,7 +1744,11 @@ static void api()
 
 	SOCKETTYPE c;
 	SOCKETTYPE *apisock;
+#ifndef WIN32
 	SSL *ssl = NULL;
+#else
+	void *ssl = NULL; /* unused on Windows */
+#endif
 
 	/* Initialize TLS if cert and key provided */
 	if (!api_tls_init()) {
