@@ -70,8 +70,13 @@ enum nvmlReturn_t {
 	NVML_ERROR_OPERATING_SYSTEM = 17,
 	NVML_ERROR_LIB_RM_VERSION_MISMATCH = 18,
 	NVML_ERROR_IN_USE = 19,
-	NVML_ERROR_UNKNOWN = 999
+	NVML_ERROR_UNKNOWN = 999,
+	NVML_ERROR_RETRY_EXCEEDED = 998
 };
+
+/* NVML retry configuration */
+#define NVML_MAX_RETRIES 3
+#define NVML_BASE_DELAY_MS 100
 
 enum nvmlClockType_t {
 	NVML_CLOCK_GRAPHICS = 0,
@@ -154,6 +159,7 @@ typedef struct {
 	nvmlReturn_t (*nvmlDeviceGetName)(nvmlDevice_t, char *, int);
 	nvmlReturn_t (*nvmlDeviceGetTemperature)(nvmlDevice_t, int, unsigned int *);
 	nvmlReturn_t (*nvmlDeviceGetFanSpeed)(nvmlDevice_t, unsigned int *);
+	nvmlReturn_t (*nvmlDeviceSetFanSpeed)(nvmlDevice_t, unsigned int);
 	nvmlReturn_t (*nvmlDeviceGetPerformanceState)(nvmlDevice_t, int *); /* enum */
 	nvmlReturn_t (*nvmlDeviceGetPowerUsage)(nvmlDevice_t, unsigned int *);
 	nvmlReturn_t (*nvmlDeviceGetSerial)(nvmlDevice_t, char *serial, unsigned int len);
@@ -174,6 +180,8 @@ typedef struct {
 	nvmlReturn_t (*nvmlDeviceGetPcieThroughput)(nvmlDevice_t, nvmlPcieUtilCounter_t, unsigned int *value);
 	// v36x (API 8)
 	nvmlReturn_t (*nvmlDeviceGetClock)(nvmlDevice_t, nvmlClockType_t clockType, nvmlClockId_t clockId, unsigned int *clockMHz);
+	nvmlReturn_t (*nvmlDeviceSetPersistenceMode)(nvmlDevice_t, nvmlEnableState_t);
+	nvmlReturn_t (*nvmlDeviceGetPersistenceMode)(nvmlDevice_t, nvmlEnableState_t *);
 #ifdef __linux__
 	nvmlReturn_t (*nvmlSystemGetTopologyGpuSet)(unsigned int cpuNumber, unsigned int *count, nvmlDevice_t *deviceArray);
 	nvmlReturn_t (*nvmlDeviceGetTopologyNearestGpus)(nvmlDevice_t, nvmlGpuTopologyLevel_t level, unsigned int *count, nvmlDevice_t *deviceArray);
@@ -207,6 +215,9 @@ int nvml_set_pstate(nvml_handle *nvmlh, int dev_id);
 
 int nvml_set_clocks(nvml_handle *nvmlh, int dev_id);
 int nvml_reset_clocks(nvml_handle *nvmlh, int dev_id);
+
+int nvml_set_fan_speed(nvml_handle *nvmlh, int dev_id, unsigned int speed_pct);
+int nvml_set_persistent_mode(nvml_handle *nvmlh, int dev_id, bool enable);
 
 /* api functions */
 

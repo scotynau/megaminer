@@ -20,12 +20,121 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdarg.h>
 
 #include "miner.h"
 #include "nvml.h"
 #include "cuda_runtime.h"
 
 #ifdef USE_WRAPNVML
+
+/* NVML retry wrapper with exponential backoff for power limit */
+static nvmlReturn_t nvml_call_with_retry_plimit(nvml_handle *nvmlh, nvmlDevice_t device, unsigned int limit, int max_retries, int base_delay_ms)
+{
+    for (int i = 0; i <= max_retries; i++) {
+        nvmlReturn_t ret = nvmlh->nvmlDeviceSetPowerManagementLimit(device, limit);
+        if (ret == NVML_SUCCESS)
+            return ret;
+        if (ret == NVML_ERROR_GPU_IS_LOST || ret == NVML_ERROR_DRIVER_NOT_LOADED) {
+            int delay = base_delay_ms * (1 << i);
+            if (opt_debug)
+                applog(LOG_DEBUG, "NVML retry %d/%d after %dms: %s", i + 1, max_retries, delay, nvmlh->nvmlErrorString(ret));
+#ifdef WIN32
+            Sleep(delay);
+#else
+            usleep(delay * 1000);
+#endif
+            continue;
+        }
+        return ret;
+    }
+    return NVML_ERROR_RETRY_EXCEEDED;
+}
+
+/* NVML retry wrapper with exponential backoff for application clocks */
+static nvmlReturn_t nvml_call_with_retry_clocks(nvml_handle *nvmlh, nvmlDevice_t device, unsigned int mem_clk, unsigned int gpu_clk, int max_retries, int base_delay_ms)
+{
+    for (int i = 0; i <= max_retries; i++) {
+        nvmlReturn_t ret = nvmlh->nvmlDeviceSetApplicationsClocks(device, mem_clk, gpu_clk);
+        if (ret == NVML_SUCCESS)
+            return ret;
+        if (ret == NVML_ERROR_GPU_IS_LOST || ret == NVML_ERROR_DRIVER_NOT_LOADED) {
+            int delay = base_delay_ms * (1 << i);
+            if (opt_debug)
+                applog(LOG_DEBUG, "NVML retry %d/%d after %dms: %s", i + 1, max_retries, delay, nvmlh->nvmlErrorString(ret));
+#ifdef WIN32
+            Sleep(delay);
+#else
+            usleep(delay * 1000);
+#endif
+            continue;
+        }
+        return ret;
+    }
+    return NVML_ERROR_RETRY_EXCEEDED;
+}
+
+/* NVML retry wrapper with exponential backoff for persistent mode */
+static nvmlReturn_t nvml_call_with_retry_persistence(nvml_handle *nvmlh, nvmlDevice_t device, nvmlEnableState_t mode, int max_retries, int base_delay_ms)
+{
+    if (!nvmlh->nvmlDeviceSetPersistenceMode)
+        return NVML_ERROR_NOT_SUPPORTED;
+    
+    for (int i = 0; i <= max_retries; i++) {
+        nvmlReturn_t ret = nvmlh->nvmlDeviceSetPersistenceMode(device, mode);
+        if (ret == NVML_SUCCESS)
+            return ret;
+        if (ret == NVML_ERROR_GPU_IS_LOST || ret == NVML_ERROR_DRIVER_NOT_LOADED) {
+            int delay = base_delay_ms * (1 << i);
+            if (opt_debug)
+                applog(LOG_DEBUG, "NVML retry %d/%d after %dms: %s", i + 1, max_retries, delay, nvmlh->nvmlErrorString(ret));
+#ifdef WIN32
+            Sleep(delay);
+#else
+            usleep(delay * 1000);
+#endif
+            continue;
+        }
+        return ret;
+    }
+    return NVML_ERROR_RETRY_EXCEEDED;
+}
+
+/* NVML retry wrapper with exponential backoff for fan speed */
+static nvmlReturn_t nvml_call_with_retry_fan(nvml_handle *nvmlh, nvmlDevice_t device, unsigned int speed_pct, int max_retries, int base_delay_ms)
+{
+    if (!nvmlh->nvmlDeviceSetFanSpeed)
+        return NVML_ERROR_NOT_SUPPORTED;
+    
+    for (int i = 0; i <= max_retries; i++) {
+        nvmlReturn_t ret = nvmlh->nvmlDeviceSetFanSpeed(device, speed_pct);
+        if (ret == NVML_SUCCESS)
+            return ret;
+        if (ret == NVML_ERROR_GPU_IS_LOST || ret == NVML_ERROR_DRIVER_NOT_LOADED) {
+            int delay = base_delay_ms * (1 << i);
+            if (opt_debug)
+                applog(LOG_DEBUG, "NVML retry %d/%d after %dms: %s", i + 1, max_retries, delay, nvmlh->nvmlErrorString(ret));
+#ifdef WIN32
+            Sleep(delay);
+#else
+            usleep(delay * 1000);
+#endif
+            continue;
+        }
+        return ret;
+    }
+    return NVML_ERROR_RETRY_EXCEEDED;
+}
+
+/* State verification helper */
+static bool nvml_verify_state(nvml_handle *nvmlh, nvmlDevice_t device, const char *operation, unsigned int target, unsigned int actual)
+{
+    if (target != actual) {
+        applog(LOG_ERR, "NVML_STATE_MISMATCH: %s target=%u actual=%u", operation, target, actual);
+        return false;
+    }
+    return true;
+}
 
 extern nvml_handle *hnvml;
 extern char driver_version[32];
@@ -187,6 +296,8 @@ nvml_handle * nvml_create()
 		wrap_dlsym(nvmlh->nvml_dll, "nvmlDeviceGetTemperature");
 	nvmlh->nvmlDeviceGetFanSpeed = (nvmlReturn_t (*)(nvmlDevice_t, unsigned int *))
 		wrap_dlsym(nvmlh->nvml_dll, "nvmlDeviceGetFanSpeed");
+	nvmlh->nvmlDeviceSetFanSpeed = (nvmlReturn_t (*)(nvmlDevice_t, unsigned int))
+		wrap_dlsym(nvmlh->nvml_dll, "nvmlDeviceSetFanSpeed");
 	nvmlh->nvmlDeviceGetPerformanceState = (nvmlReturn_t (*)(nvmlDevice_t, int *))
 		wrap_dlsym(nvmlh->nvml_dll, "nvmlDeviceGetPerformanceState"); /* or nvmlDeviceGetPowerState */
 	nvmlh->nvmlDeviceGetSerial = (nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int))
@@ -219,6 +330,11 @@ nvml_handle * nvml_create()
 	// v36x (API 8 / Pascal)
 	nvmlh->nvmlDeviceGetClock = (nvmlReturn_t (*)(nvmlDevice_t, nvmlClockType_t clockType, nvmlClockId_t clockId, unsigned int *clockMHz))
 		wrap_dlsym(nvmlh->nvml_dll, "nvmlDeviceGetClock");
+	// Persistence mode (requires root/admin)
+	nvmlh->nvmlDeviceSetPersistenceMode = (nvmlReturn_t (*)(nvmlDevice_t, nvmlEnableState_t))
+		wrap_dlsym(nvmlh->nvml_dll, "nvmlDeviceSetPersistenceMode");
+	nvmlh->nvmlDeviceGetPersistenceMode = (nvmlReturn_t (*)(nvmlDevice_t, nvmlEnableState_t *))
+		wrap_dlsym(nvmlh->nvml_dll, "nvmlDeviceGetPersistenceMode");
 
 	if (nvmlh->nvmlInit == NULL ||
 			nvmlh->nvmlShutdown == NULL ||
@@ -235,7 +351,35 @@ nvml_handle * nvml_create()
 		return NULL;
 	}
 
-	nvmlh->nvmlInit();
+	/* Init with retry */
+	nvmlReturn_t init_rc = NVML_ERROR_UNKNOWN;
+	for (int i = 0; i <= NVML_MAX_RETRIES; i++) {
+		init_rc = nvmlh->nvmlInit();
+		if (init_rc == NVML_SUCCESS)
+			break;
+		if (init_rc == NVML_ERROR_GPU_IS_LOST || init_rc == NVML_ERROR_DRIVER_NOT_LOADED) {
+			if (i < NVML_MAX_RETRIES) {
+				int delay = NVML_BASE_DELAY_MS * (1 << i);
+				if (opt_debug)
+					applog(LOG_DEBUG, "NVML init retry %d/%d after %dms: %s", i + 1, NVML_MAX_RETRIES, delay, nvmlh->nvmlErrorString(init_rc));
+#ifdef WIN32
+				Sleep(delay);
+#else
+				usleep(delay * 1000);
+#endif
+				continue;
+			}
+		}
+		break;
+	}
+	if (init_rc != NVML_SUCCESS) {
+		if (opt_debug)
+			applog(LOG_DEBUG, "NVML init failed: %s", nvmlh->nvmlErrorString(init_rc));
+		wrap_dlclose(nvmlh->nvml_dll);
+		free(nvmlh);
+		return NULL;
+	}
+	
 	if (nvmlh->nvmlSystemGetDriverVersion)
 		nvmlh->nvmlSystemGetDriverVersion(driver_version, sizeof(driver_version));
 	nvmlh->nvmlDeviceGetCount(&nvmlh->nvml_gpucount);
@@ -388,10 +532,18 @@ int nvml_set_clocks(nvml_handle *nvmlh, int dev_id)
 		free(gpu_clocks);
 	}
 
-	rc = nvmlh->nvmlDeviceSetApplicationsClocks(nvmlh->devs[n], mem_clk, gpu_clk);
-	if (rc == NVML_SUCCESS)
+	rc = nvml_call_with_retry_clocks(nvmlh, nvmlh->devs[n], mem_clk, gpu_clk, NVML_MAX_RETRIES, NVML_BASE_DELAY_MS);
+	if (rc == NVML_SUCCESS) {
+		/* Verify state after set */
+		uint32_t actual_mem = 0, actual_gpu = 0;
+		nvmlh->nvmlDeviceGetApplicationsClock(nvmlh->devs[n], NVML_CLOCK_MEM, &actual_mem);
+		nvmlh->nvmlDeviceGetApplicationsClock(nvmlh->devs[n], NVML_CLOCK_GRAPHICS, &actual_gpu);
+		if (!nvml_verify_state(nvmlh, nvmlh->devs[n], "set_clocks_mem", mem_clk, actual_mem) ||
+		    !nvml_verify_state(nvmlh, nvmlh->devs[n], "set_clocks_gpu", gpu_clk, actual_gpu)) {
+			return -1;
+		}
 		applog(LOG_INFO, "GPU #%d: application clocks set to %u/%u", dev_id, mem_clk, gpu_clk);
-	else {
+	} else {
 		applog(LOG_WARNING, "GPU #%d: %u/%u - %s (NVML)", dev_id, mem_clk, gpu_clk, nvmlh->nvmlErrorString(rc));
 		return -1;
 	}
@@ -513,6 +665,72 @@ int nvml_set_pstate(nvml_handle *nvmlh, int dev_id)
 	return 1;
 }
 
+/* Set fan speed percentage (if supported by hardware) */
+int nvml_set_fan_speed(nvml_handle *nvmlh, int dev_id, unsigned int speed_pct)
+{
+	nvmlReturn_t rc;
+	int n = nvmlh->cuda_nvml_device_id[dev_id];
+	if (n < 0 || n >= nvmlh->nvml_gpucount)
+		return -ENODEV;
+
+	if (!nvmlh->nvmlDeviceSetFanSpeed)
+		return -ENOSYS;
+
+	if (speed_pct > 100)
+		speed_pct = 100;
+
+	rc = nvml_call_with_retry_fan(nvmlh, nvmlh->devs[n], speed_pct, NVML_MAX_RETRIES, NVML_BASE_DELAY_MS);
+	if (rc != NVML_SUCCESS) {
+		applog(LOG_WARNING, "GPU #%d: fan speed %s", dev_id, nvmlh->nvmlErrorString(rc));
+		return -1;
+	}
+	
+	/* Verify state after set */
+	unsigned int actual_speed = 0;
+	rc = nvmlh->nvmlDeviceGetFanSpeed(nvmlh->devs[n], &actual_speed);
+	if (rc == NVML_SUCCESS) {
+		if (!nvml_verify_state(nvmlh, nvmlh->devs[n], "set_fan_speed", speed_pct, actual_speed)) {
+			return -1;
+		}
+	}
+	
+	if (!opt_quiet)
+		applog(LOG_INFO, "GPU #%d: fan speed set to %u%%", dev_id, speed_pct);
+	return 1;
+}
+
+/* Set persistence mode (requires root/admin) */
+int nvml_set_persistent_mode(nvml_handle *nvmlh, int dev_id, bool enable)
+{
+	nvmlReturn_t rc;
+	int n = nvmlh->cuda_nvml_device_id[dev_id];
+	if (n < 0 || n >= nvmlh->nvml_gpucount)
+		return -ENODEV;
+
+	if (!nvmlh->nvmlDeviceSetPersistenceMode)
+		return -ENOSYS;
+
+	nvmlEnableState_t mode = enable ? NVML_FEATURE_ENABLED : NVML_FEATURE_DISABLED;
+	rc = nvml_call_with_retry_persistence(nvmlh, nvmlh->devs[n], mode, NVML_MAX_RETRIES, NVML_BASE_DELAY_MS);
+	if (rc != NVML_SUCCESS) {
+		applog(LOG_WARNING, "GPU #%d: persistence mode %s", dev_id, nvmlh->nvmlErrorString(rc));
+		return -1;
+	}
+	
+	/* Verify state after set */
+	nvmlEnableState_t actual_mode = NVML_FEATURE_UNKNOWN;
+	rc = nvmlh->nvmlDeviceGetPersistenceMode(nvmlh->devs[n], &actual_mode);
+	if (rc == NVML_SUCCESS) {
+		if (!nvml_verify_state(nvmlh, nvmlh->devs[n], "set_persistent_mode", mode, actual_mode)) {
+			return -1;
+		}
+	}
+	
+	if (!opt_quiet)
+		applog(LOG_INFO, "GPU #%d: persistence mode %s", dev_id, enable ? "enabled" : "disabled");
+	return 1;
+}
+
 int nvml_set_plimit(nvml_handle *nvmlh, int dev_id)
 {
 	nvmlReturn_t rc = NVML_ERROR_UNKNOWN;
@@ -541,16 +759,26 @@ int nvml_set_plimit(nvml_handle *nvmlh, int dev_id)
 
 	plimit = min(plimit, pmax);
 	plimit = max(plimit, pmin);
-	rc = nvmlh->nvmlDeviceSetPowerManagementLimit(nvmlh->devs[n], plimit);
+	
+	rc = nvml_call_with_retry_plimit(nvmlh, nvmlh->devs[n], plimit, NVML_MAX_RETRIES, NVML_BASE_DELAY_MS);
 	if (rc != NVML_SUCCESS) {
 #ifndef WIN32
 		applog(LOG_WARNING, "GPU #%d: plimit %s", dev_id, nvmlh->nvmlErrorString(rc));
 #endif
 		return -1;
-	} else {
-		device_plimit[dev_id] = plimit / 1000;
-		nvml_plimit_set = true;
 	}
+	
+	/* Verify state after set */
+	uint32_t actual_limit = 0;
+	rc = nvmlh->nvmlDeviceGetPowerManagementLimit(nvmlh->devs[n], &actual_limit);
+	if (rc == NVML_SUCCESS) {
+		if (!nvml_verify_state(nvmlh, nvmlh->devs[n], "set_plimit", plimit, actual_limit)) {
+			return -1;
+		}
+	}
+	
+	device_plimit[dev_id] = plimit / 1000;
+	nvml_plimit_set = true;
 
 	if (!opt_quiet) {
 		applog(LOG_INFO, "GPU #%d: power limit set to %uW (allowed range is %u-%u)",
