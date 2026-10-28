@@ -12,7 +12,7 @@
 #include <windows.h>
 #include <winhttp.h>
 #include <schannel.h>
-#include <secur32.h>
+#include <security.h>
 
 #include <stdint.h>
 #include <stdio.h>

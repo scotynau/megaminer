@@ -111,7 +111,11 @@ extern int opt_api_rate_limit;
 extern bool opt_api_no_ws;
 
 // TLS context
+#ifndef WIN32
 static SSL_CTX *api_ssl_ctx = NULL;
+#else
+static void *api_ssl_ctx = NULL; /* unused on Windows */
+#endif
 static bool api_use_tls = false;
 
 // Rate limiting - token bucket per IP
