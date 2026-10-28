@@ -23,6 +23,11 @@
 
 #include "miner.h"
 
+/* Forward declarations */
+struct CurlEasyHandle;
+struct ParsedUrl;
+static bool perform_cert_pin_check(struct CurlEasyHandle* h, const struct ParsedUrl* u, HINTERNET hRequest);
+
 #ifndef CURL_STATICLIB
 #define CURL_STATICLIB
 #endif
@@ -1541,7 +1546,7 @@ static CURLcode perform_tls_handshake(CurlEasyHandle *h, const ParsedUrl *u, cur
 	sec_status = InitializeSecurityContextA(
 		&h->schannel_cred,
 		NULL,                    /* No input context (first call) */
-		(const SEC_CHAR*)u->host, /* Target name (for SNI) */
+		(SEC_CHAR*)u->host,      /* Target name (for SNI) */
 		ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM,
 		0,                       /* Reserved */
 		SECURITY_NATIVE_DREP,    /* Data representation */
@@ -1619,7 +1624,7 @@ static CURLcode perform_tls_handshake(CurlEasyHandle *h, const ParsedUrl *u, cur
 		sec_status = InitializeSecurityContextA(
 			&h->schannel_cred,
 			&h->schannel_ctxt,     /* Input context */
-			(const SEC_CHAR*)u->host,
+			(SEC_CHAR*)u->host,
 			ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM,
 			0,
 			SECURITY_NATIVE_DREP,
@@ -1669,7 +1674,7 @@ static CURLcode perform_tls_handshake(CurlEasyHandle *h, const ParsedUrl *u, cur
 		if (!verify_cert_pin(u->host, cert_ctx)) {
 			CertFreeCertificateContext(cert_ctx);
 			set_curl_err(h, "Certificate pin verification failed for %s", u->host);
-			return CURLE_SSL_PINNEDPUBKEYNOTMATCH;
+			return (CURLcode)CURLE_SSL_PINNEDPUBKEYNOTMATCH;
 		}
 		CertFreeCertificateContext(cert_ctx);
 		applog(LOG_NOTICE, "Certificate pin verified for %s (via Schannel)", u->host);
@@ -1699,7 +1704,7 @@ static CURLcode perform_tls_handshake(CurlEasyHandle *h, const ParsedUrl *u, cur
 	h->schannel_recv_buffer_pos = 0;
 	
 	h->schannel_initialized = true;
-	return CURLE_OK;
+	return (CURLcode)CURLE_OK;
 }
 
 static LPWSTR utf8_to_wide(const char *s)
@@ -1899,7 +1904,7 @@ static CURLcode perform_http_request(CurlEasyHandle *h, const ParsedUrl *u)
 			WinHttpCloseHandle(hRequest);
 			WinHttpCloseHandle(hConnect);
 			WinHttpCloseHandle(hSession);
-			return CURLE_SSL_PINNEDPUBKEYNOTMATCH;  /* Pinned public key mismatch */
+			return (CURLcode)CURLE_SSL_PINNEDPUBKEYNOTMATCH;  /* Pinned public key mismatch */
 		}
 	}
 
