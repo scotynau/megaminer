@@ -21,6 +21,8 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "miner.h"
+
 #ifndef CURL_STATICLIB
 #define CURL_STATICLIB
 #endif

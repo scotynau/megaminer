@@ -523,11 +523,15 @@ static void api_health_endpoint(SOCKETTYPE c, in_addr_t client_ip)
 		"\r\n"
 		"%s", strlen(json), json);
 
+#ifndef WIN32
 	if (api_use_tls && ssl) {
 		SSL_write(ssl, response, strlen(response));
 	} else {
 		send(c, response, strlen(response), 0);
 	}
+#else
+	send(c, response, strlen(response), 0);
+#endif
 }
 
 /**
@@ -645,11 +649,15 @@ static void api_metrics_endpoint(SOCKETTYPE c, in_addr_t client_ip)
 		"\r\n"
 		"%s", strlen(metrics), metrics);
 
+#ifndef WIN32
 	if (api_use_tls && ssl) {
 		SSL_write(ssl, response, strlen(response));
 	} else {
 		send(c, response, strlen(response), 0);
 	}
+#else
+	send(c, response, strlen(response), 0);
+#endif
 }
 
 /*****************************************************************************/
@@ -1225,11 +1233,15 @@ static int websocket_handshake_tls(SOCKETTYPE c, char *result, char *clientkey, 
 		p += handlen;
 		memcpy(p, hd, frames);
 		memcpy(p + frames, result, (size_t)datalen);
+#ifndef WIN32
 		if (api_use_tls && ssl) {
 			SSL_write(ssl, (const char*)data, (int) (handlen + frames + datalen + 1));
 		} else {
 			send(c, (const char*)data, (int) (handlen + frames + datalen + 1), 0);
 		}
+#else
+		send(c, (const char*)data, (int) (handlen + frames + datalen + 1), 0);
+#endif
 		free(data);
 	}
 	return 0;
