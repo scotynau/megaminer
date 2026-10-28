@@ -665,9 +665,15 @@ typedef struct compat_SHA1_CTX {
 	unsigned int num;
 } compat_SHA1_CTX;
 
-extern "C" int compat_SHA1_Init(compat_SHA1_CTX *c);
-extern "C" int compat_SHA1_Update(compat_SHA1_CTX *c, const void *data, size_t len);
-extern "C" int compat_SHA1_Final(unsigned char *md, compat_SHA1_CTX *c);
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern int compat_SHA1_Init(compat_SHA1_CTX *c);
+extern int compat_SHA1_Update(compat_SHA1_CTX *c, const void *data, size_t len);
+extern int compat_SHA1_Final(unsigned char *md, compat_SHA1_CTX *c);
+#ifdef __cplusplus
+}
+#endif
 
 // bignum
 double bn_convert_nbits(const uint32_t nbits);
