@@ -8,6 +8,7 @@
 #ifdef _WIN32
 
 #include <windows.h>
+#include <psapi.h>
 #include <memory>
 #include <stdexcept>
 
@@ -26,11 +27,30 @@ public:
 	{
 		bool success = false;
 #ifdef _WIN64
-		library = LoadLibrary("nvapi64.dll");
+		/* 64-bit: load nvapi64.dll only from System32 */
+		library = LoadLibraryEx("nvapi64.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
 #else
-		library = LoadLibrary("nvapi.dll");
+		/* 32-bit on x64 (WoW64): load nvapi.dll from System32/SysWOW64 */
+		library = LoadLibraryEx("nvapi.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
 #endif
 		if (library != NULL) {
+			/* Post-load validation: verify DLL loaded from System32 or SysWOW64 */
+			char path[MAX_PATH];
+			if (GetModuleFileNameEx(GetCurrentProcess(), library, path, MAX_PATH)) {
+				if (strstr(path, "\\System32\\") || strstr(path, "\\SysWOW64\\")) {
+					if (opt_debug) {
+						applog(LOG_DEBUG, "Loaded %s from: %s", 
+#ifdef _WIN64
+							"nvapi64.dll"
+#else
+							"nvapi.dll"
+#endif
+							, path);
+					}
+				} else {
+					applog(LOG_WARNING, "SECURITY: NVAPI loaded from unexpected path: %s", path);
+				}
+			}
 			nvidia_query = reinterpret_cast<QueryPtr>(GetProcAddress(library, "nvapi_QueryInterface"));
 			if (nvidia_query != NULL) {
 				const uint32_t NVAPI_ID_INIT = 0x0150E828;
@@ -41,7 +61,7 @@ public:
 		}
 
 		if (!success) {
-			throw std::runtime_error("Unable to locate NVAPI library!");
+			throw std::runtime_error("Unable to locate NVAPI library in System32!");
 		}
 	}
 

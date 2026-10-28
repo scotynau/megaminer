@@ -50,14 +50,27 @@ extern bool need_memclockrst;
 
 /*
  * Wrappers to emulate dlopen() on other systems like Windows
+ * SECURITY: Use LoadLibraryEx with safe search flags to prevent DLL hijacking
  */
 #if defined(_MSC_VER) || defined(_WIN32) || defined(_WIN64)
 	#include <windows.h>
+	#include <psapi.h>
 	static void *wrap_dlopen(const char *filename) {
-		HMODULE h = LoadLibrary(filename);
+		HMODULE h = LoadLibraryEx(filename, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
 		if (!h && opt_debug) {
-			applog(LOG_DEBUG, "dlopen(%d): failed to load %s", 
+			applog(LOG_DEBUG, "dlopen(%d): failed to load %s from System32", 
 				GetLastError(), filename);
+		}
+		/* Post-load validation: verify DLL loaded from System32 or SysWOW64 */
+		if (h && opt_debug) {
+			char path[MAX_PATH];
+			if (GetModuleFileNameEx(GetCurrentProcess(), h, path, MAX_PATH)) {
+				if (strstr(path, "\\System32\\") || strstr(path, "\\SysWOW64\\")) {
+					applog(LOG_DEBUG, "Loaded %s from: %s", filename, path);
+				} else {
+					applog(LOG_WARNING, "SECURITY: %s loaded from unexpected path: %s", filename, path);
+				}
+			}
 		}
 		return (void*)h;
 	}
@@ -95,8 +108,8 @@ nvml_handle * nvml_create()
 	nvml_handle *nvmlh = NULL;
 
 #ifdef WIN32
-	/* Windows (do not use slashes, else ExpandEnvironmentStrings will mix them) */
-#define  libnvidia_ml "%PROGRAMFILES%\\NVIDIA Corporation\\NVSMI\\nvml.dll"
+	/* SECURITY: Load nvml.dll only from System32 via LoadLibraryEx with safe flags.
+	 * Do NOT search PROGRAMFILES or current directory (DLL hijacking prevention). */
 #else
 	/* linux assumed */
 #define  libnvidia_ml "libnvidia-ml.so"
@@ -104,17 +117,14 @@ nvml_handle * nvml_create()
 
 	char tmp[512];
 #ifdef WIN32
-	ExpandEnvironmentStrings(libnvidia_ml, tmp, sizeof(tmp));
+	/* Direct load from System32 - no path expansion needed */
+	strcpy(tmp, "nvml.dll");
 #else
 	strcpy(tmp, libnvidia_ml);
 #endif
 
 	void *nvml_dll = wrap_dlopen(tmp);
 	if (nvml_dll == NULL) {
-#ifdef WIN32
-		nvml_dll = wrap_dlopen("nvml.dll");
-		if (nvml_dll == NULL)
-#endif
 		return NULL;
 	}
 
