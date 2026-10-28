@@ -657,6 +657,18 @@ extern int curl_verify_cert_pin_stratum(const char* host, const unsigned char* c
 }
 #endif
 
+/* compat SHA1 (for WebSocket handshake - avoids OpenSSL conflict) */
+typedef struct compat_SHA1_CTX {
+	uint32_t h0, h1, h2, h3, h4;
+	uint32_t Nh, Nl;
+	unsigned char data[64];
+	unsigned int num;
+} compat_SHA1_CTX;
+
+extern "C" int compat_SHA1_Init(compat_SHA1_CTX *c);
+extern "C" int compat_SHA1_Update(compat_SHA1_CTX *c, const void *data, size_t len);
+extern "C" int compat_SHA1_Final(unsigned char *md, compat_SHA1_CTX *c);
+
 // bignum
 double bn_convert_nbits(const uint32_t nbits);
 void bn_nbits_to_uchar(const uint32_t nBits, uchar *target);

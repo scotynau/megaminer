@@ -461,17 +461,11 @@ extern "C" unsigned char *SHA256(const unsigned char *d, size_t n, unsigned char
 /* =========================================================================
  * 1c. SHA-1 Implementation (compat layer for api.cpp WebSocket handshake)
  * Renamed to compat_SHA1_* to avoid OpenSSL symbol conflicts
+ * Struct definition is in miner.h
  * ========================================================================= */
 
 #define SHA1_DIGEST_LENGTH 20
 #define SHA1_CBLOCK 64
-
-typedef struct compat_SHA1_CTX {
-	SHA_LONG h0, h1, h2, h3, h4;
-	SHA_LONG Nh, Nl;
-	unsigned char data[SHA1_CBLOCK];
-	unsigned int num;
-} compat_SHA1_CTX;
 
 static const SHA_LONG K1 = 0x5a827999UL;
 static const SHA_LONG K2 = 0x6ed9eba1UL;
@@ -480,58 +474,16 @@ static const SHA_LONG K4 = 0xca62c1d6UL;
 
 #define SHA_ROT(a, n) (((a) << (n)) | ((a) >> (32 - (n))))
 
-static void compat_sha1_transform(compat_SHA1_CTX *c, const unsigned char *data)
+extern "C" int compat_SHA1_Init(compat_SHA1_CTX *ctx)
 {
-	SHA_LONG a, b, c, d, e, t;
-	SHA_LONG W[80];
-	const unsigned char *p = data;
-	int i;
-
-	for (i = 0; i < 16; ++i) {
-		W[i] = (SHA_LONG)p[0] << 24 | (SHA_LONG)p[1] << 16 |
-		       (SHA_LONG)p[2] << 8 | (SHA_LONG)p[3];
-		p += 4;
-	}
-	for (i = 16; i < 80; ++i) {
-		W[i] = SHA_ROT(W[i-3] ^ W[i-8] ^ W[i-14] ^ W[i-16], 1);
-	}
-
-	a = c->h0;
-	b = c->h1;
-	c = c->h2;
-	d = c->h3;
-	e = c->h4;
-
-	for (i = 0; i < 20; ++i) {
-		t = SHA_ROT(a, 5) + ((b & c) | (~b & d)) + e + W[i] + K1;
-		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
-	}
-	for (i = 20; i < 40; ++i) {
-		t = SHA_ROT(a, 5) + (b ^ c ^ d) + e + W[i] + K2;
-		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
-	}
-	for (i = 40; i < 60; ++i) {
-		t = SHA_ROT(a, 5) + ((b & c) | (b & d) | (c & d)) + e + W[i] + K3;
-		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
-	}
-	for (i = 60; i < 80; ++i) {
-		t = SHA_ROT(a, 5) + (b ^ c ^ d) + e + W[i] + K4;
-		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
-	}
-
-	c->h0 += a; c->h1 += b; c->h2 += c; c->h3 += d; c->h4 += e;
-}
-
-extern "C" int compat_SHA1_Init(compat_SHA1_CTX *c)
-{
-	c->h0 = 0x67452301UL;
-	c->h1 = 0xefcdab89UL;
-	c->h2 = 0x98badcfeUL;
-	c->h3 = 0x10325476UL;
-	c->h4 = 0xc3d2e1f0UL;
-	c->Nh = 0;
-	c->Nl = 0;
-	c->num = 0;
+	ctx->h0 = 0x67452301UL;
+	ctx->h1 = 0xefcdab89UL;
+	ctx->h2 = 0x98badcfeUL;
+	ctx->h3 = 0x10325476UL;
+	ctx->h4 = 0xc3d2e1f0UL;
+	ctx->Nh = 0;
+	ctx->Nl = 0;
+	ctx->num = 0;
 	return 1;
 }
 
@@ -552,7 +504,7 @@ extern "C" int compat_SHA1_Update(compat_SHA1_CTX *c, const void *data_, size_t 
 			return 1;
 		}
 		memcpy(c->data + n, data, todo);
-		compat_sha1_transform(c, c->data);
+		compat_compat_sha1_transform(c, c->data);
 		data += todo;
 		len -= todo;
 		n = 0;
@@ -577,7 +529,7 @@ extern "C" int compat_SHA1_Final(unsigned char *md, compat_SHA1_CTX *c)
 	c->data[n++] = 0x80;
 	if (n > SHA1_CBLOCK - 8) {
 		memset(c->data + n, 0, SHA1_CBLOCK - n);
-		sha1_transform(c, c->data);
+		compat_sha1_transform(c, c->data);
 		n = 0;
 	}
 	memset(c->data + n, 0, SHA1_CBLOCK - 8 - n);
@@ -589,7 +541,7 @@ extern "C" int compat_SHA1_Final(unsigned char *md, compat_SHA1_CTX *c)
 	c->data[SHA1_CBLOCK - 3] = (unsigned char)(c->Nl >> 16);
 	c->data[SHA1_CBLOCK - 2] = (unsigned char)(c->Nl >> 8);
 	c->data[SHA1_CBLOCK - 1] = (unsigned char)(c->Nl);
-	sha1_transform(c, c->data);
+	compat_sha1_transform(c, c->data);
 
 	md[0] = (unsigned char)(c->h0 >> 24);
 	md[1] = (unsigned char)(c->h0 >> 16);
