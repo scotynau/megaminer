@@ -31,8 +31,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#ifndef WIN32
+# include <openssl/ssl.h>
+# include <openssl/err.h>
+#endif
 
 #include "miner.h"
 #include "nvml.h"
@@ -449,6 +451,198 @@ static char *getmeminfo(char *params)
 /*****************************************************************************/
 
 /**
+ * Health check endpoint - returns JSON with miner health status
+ */
+static void api_health_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
+{
+	time_t now = time(NULL);
+	double uptime = difftime(now, startup);
+
+	/* Calculate aggregate stats */
+	uint32_t accepted_count = 0, rejected_count = 0, solved_count = 0;
+	for (int p = 0; p < num_pools; p++) {
+		accepted_count += pools[p].accepted_count;
+		rejected_count += pools[p].rejected_count;
+		solved_count += pools[p].solved_count;
+	}
+
+	/* Check stratum connection status */
+	bool stratum_connected = (stratum.curl != NULL && stratum.tm_connected > 0);
+	time_t stratum_uptime = stratum_connected ? difftime(now, stratum.tm_connected) : 0;
+
+	/* Get GPU stats */
+	int gpu_count = active_gpus;
+	float max_gpu_temp = 0;
+	for (int i = 0; i < opt_n_threads; i++) {
+		struct cgpu_info *cgpu = &thr_info[i].gpu;
+		if (cgpu->has_monitoring && cgpu->gpu_temp > max_gpu_temp)
+			max_gpu_temp = cgpu->gpu_temp;
+	}
+
+	/* Calculate reject rate */
+	double reject_rate = 0;
+	uint32_t total_shares = accepted_count + rejected_count;
+	if (total_shares > 0)
+		reject_rate = (100.0 * rejected_count) / total_shares;
+
+	/* Determine health status */
+	const char *status = "healthy";
+	if (!stratum_connected) {
+		status = "unhealthy";
+	} else if (max_gpu_temp >= 85.0 || reject_rate >= 5.0) {
+		status = "degraded";
+	}
+
+	/* Build JSON response */
+	char json[2048];
+	snprintf(json, sizeof(json),
+		"{\"status\":\"%s\",\"uptime_sec\":%.0f,\"stratum\":\"%s\","
+		"\"gpu_count\":%d,\"gpu_temp_max\":%.1f,"
+		"\"shares_accepted\":%u,\"shares_rejected\":%u,"
+		"\"shares_solved\":%u,\"reject_rate_pct\":%.2f}",
+		status, uptime, stratum_connected ? "connected" : "disconnected",
+		gpu_count, max_gpu_temp,
+		accepted_count, rejected_count,
+		solved_count, reject_rate);
+
+	/* Send HTTP response */
+	char response[4096];
+	snprintf(response, sizeof(response),
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Type: application/json\r\n"
+		"Content-Length: %zu\r\n"
+		"Connection: close\r\n"
+		"\r\n"
+		"%s", strlen(json), json);
+
+	if (api_use_tls && ssl) {
+		SSL_write(ssl, response, strlen(response));
+	} else {
+		send(c, response, strlen(response), 0);
+	}
+}
+
+/**
+ * Prometheus metrics endpoint
+ */
+static void api_metrics_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
+{
+	time_t now = time(NULL);
+	double uptime = difftime(now, startup);
+
+	/* Calculate aggregate stats */
+	uint32_t accepted_count = 0, rejected_count = 0, solved_count = 0;
+	for (int p = 0; p < num_pools; p++) {
+		accepted_count += pools[p].accepted_count;
+		rejected_count += pools[p].rejected_count;
+		solved_count += pools[p].solved_count;
+	}
+
+	/* Check stratum connection status */
+	bool stratum_connected = (stratum.curl != NULL && stratum.tm_connected > 0);
+	time_t stratum_uptime = stratum_connected ? difftime(now, stratum.tm_connected) : 0;
+
+	/* Get GPU stats */
+	int gpu_count = active_gpus;
+	float max_gpu_temp = 0;
+	for (int i = 0; i < opt_n_threads; i++) {
+		struct cgpu_info *cgpu = &thr_info[i].gpu;
+		if (cgpu->has_monitoring && cgpu->gpu_temp > max_gpu_temp)
+			max_gpu_temp = cgpu->gpu_temp;
+	}
+
+	/* Get hashrate */
+	char algo[64] = { 0 };
+	get_currentalgo(algo, sizeof(algo));
+
+	/* Build Prometheus metrics */
+	char metrics[8192];
+	char *p = metrics;
+	p += sprintf(p, "# HELP megaminer_uptime_seconds Uptime in seconds\n");
+	p += sprintf(p, "# TYPE megaminer_uptime_seconds gauge\n");
+	p += sprintf(p, "megaminer_uptime_seconds %.0f\n", uptime);
+
+	p += sprintf(p, "# HELP megaminer_stratum_connected Stratum connection status (1=connected)\n");
+	p += sprintf(p, "# TYPE megaminer_stratum_connected gauge\n");
+	p += sprintf(p, "megaminer_stratum_connected %d\n", stratum_connected ? 1 : 0);
+
+	p += sprintf(p, "# HELP megaminer_stratum_uptime_seconds Stratum connection uptime in seconds\n");
+	p += sprintf(p, "# TYPE megaminer_stratum_uptime_seconds gauge\n");
+	p += sprintf(p, "megaminer_stratum_uptime_seconds %.0f\n", (double)stratum_uptime);
+
+	p += sprintf(p, "# HELP megaminer_shares_total Total shares submitted\n");
+	p += sprintf(p, "# TYPE megaminer_shares_total counter\n");
+	p += sprintf(p, "megaminer_shares_total{result=\"accepted\"} %u\n", accepted_count);
+	p += sprintf(p, "megaminer_shares_total{result=\"rejected\"} %u\n", rejected_count);
+	p += sprintf(p, "megaminer_shares_total{result=\"solved\"} %u\n", solved_count);
+
+	p += sprintf(p, "# HELP megaminer_gpu_count Number of GPUs\n");
+	p += sprintf(p, "# TYPE megaminer_gpu_count gauge\n");
+	p += sprintf(p, "megaminer_gpu_count %d\n", gpu_count);
+
+	p += sprintf(p, "# HELP megaminer_gpu_temperature_celsius GPU temperature\n");
+	p += sprintf(p, "# TYPE megaminer_gpu_temperature_celsius gauge\n");
+	for (int i = 0; i < opt_n_threads; i++) {
+		struct cgpu_info *cgpu = &thr_info[i].gpu;
+		if (cgpu->has_monitoring) {
+			p += sprintf(p, "megaminer_gpu_temperature_celsius{gpu=\"%d\"} %.1f\n",
+				i, cgpu->gpu_temp);
+		}
+	}
+
+	p += sprintf(p, "# HELP megaminer_gpu_temperature_max_celsius Maximum GPU temperature\n");
+	p += sprintf(p, "# TYPE megaminer_gpu_temperature_max_celsius gauge\n");
+	p += sprintf(p, "megaminer_gpu_temperature_max_celsius %.1f\n", max_gpu_temp);
+
+	p += sprintf(p, "# HELP megaminer_hashrate_hashrate Hashrate in H/s\n");
+	p += sprintf(p, "# TYPE megaminer_hashrate_hashrate gauge\n");
+	p += sprintf(p, "megaminer_hashrate_hashrate{algo=\"%s\"} %.0f\n", algo, global_hashrate);
+
+	/* Per-GPU hashrate */
+	for (int i = 0; i < opt_n_threads; i++) {
+		double khs = stats_get_speed(i, 0.0) / 1000.0;
+		if (khs > 0) {
+			p += sprintf(p, "megaminer_hashrate_hashrate{algo=\"%s\",gpu=\"%d\"} %.0f\n",
+				algo, i, khs * 1000.0);
+		}
+	}
+
+	p += sprintf(p, "# HELP megaminer_shares_reject_rate Share reject rate percentage\n");
+	p += sprintf(p, "# TYPE megaminer_shares_reject_rate gauge\n");
+	double reject_rate = 0;
+	uint32_t total_shares = accepted_count + rejected_count;
+	if (total_shares > 0)
+		reject_rate = (100.0 * rejected_count) / total_shares;
+	p += sprintf(p, "megaminer_shares_reject_rate %.2f\n", reject_rate);
+
+	/* Circuit breaker status */
+	if (stratum.circuit_breaker) {
+		p += sprintf(p, "# HELP megaminer_circuit_breaker_state Circuit breaker state (0=closed, 1=open, 2=half_open)\n");
+		p += sprintf(p, "# TYPE megaminer_circuit_breaker_state gauge\n");
+		p += sprintf(p, "megaminer_circuit_breaker_state{component=\"stratum\"} %d\n",
+			stratum.circuit_breaker->state);
+	}
+
+	/* Send HTTP response */
+	char response[16384];
+	snprintf(response, sizeof(response),
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n"
+		"Content-Length: %zu\r\n"
+		"Connection: close\r\n"
+		"\r\n"
+		"%s", strlen(metrics), metrics);
+
+	if (api_use_tls && ssl) {
+		SSL_write(ssl, response, strlen(response));
+	} else {
+		send(c, response, strlen(response), 0);
+	}
+}
+
+/*****************************************************************************/
+
+/**
  * Set pool by index (pools array in json config)
  * switchpool|1|
  */
@@ -473,6 +667,7 @@ static char *remote_switchpool(char *params)
 /**
  * Change pool url (see --url parameter)
  * seturl|stratum+tcp://<user>:<pass>@mine.xpool.ca:1131|
+ * seturl|stratum+tl://<user>:<pass>@pool.example.com:443|
  */
 static char *remote_seturl(char *params)
 {
@@ -1696,6 +1891,30 @@ static void api()
 				if (request_path && strcmp(request_path, "/events") == 0) {
 					if (request_path) free(request_path);
 					sse_events_endpoint(ssl, c, client_ip);
+					if (ssl) {
+						SSL_shutdown(ssl);
+						SSL_free(ssl);
+					}
+					CLOSESOCKET(c);
+					continue;
+				}
+
+				/* Handle REST /health endpoint */
+				if (request_path && strcmp(request_path, "/health") == 0) {
+					if (request_path) free(request_path);
+					api_health_endpoint(ssl, c, client_ip);
+					if (ssl) {
+						SSL_shutdown(ssl);
+						SSL_free(ssl);
+					}
+					CLOSESOCKET(c);
+					continue;
+				}
+
+				/* Handle REST /metrics endpoint (Prometheus format) */
+				if (request_path && strcmp(request_path, "/metrics") == 0) {
+					if (request_path) free(request_path);
+					api_metrics_endpoint(ssl, c, client_ip);
 					if (ssl) {
 						SSL_shutdown(ssl);
 						SSL_free(ssl);

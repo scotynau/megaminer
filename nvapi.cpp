@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 #include "compat/nvapi/nvapi_ccminer.h"
+#include "miner.h"
 
 class NvAPILibraryHandle
 {
