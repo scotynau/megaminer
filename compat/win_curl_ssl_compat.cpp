@@ -459,20 +459,19 @@ extern "C" unsigned char *SHA256(const unsigned char *d, size_t n, unsigned char
 }
 
 /* =========================================================================
- * 1c. SHA-1 Implementation (for api.cpp WebSocket handshake)
- * Only compile if OpenSSL SHA1_CTX not already defined
+ * 1c. SHA-1 Implementation (compat layer for api.cpp WebSocket handshake)
+ * Renamed to compat_SHA1_* to avoid OpenSSL symbol conflicts
  * ========================================================================= */
-#ifndef SHA1_CTX
 
 #define SHA1_DIGEST_LENGTH 20
 #define SHA1_CBLOCK 64
 
-typedef struct SHA1_CTX {
+typedef struct compat_SHA1_CTX {
 	SHA_LONG h0, h1, h2, h3, h4;
 	SHA_LONG Nh, Nl;
 	unsigned char data[SHA1_CBLOCK];
 	unsigned int num;
-} SHA1_CTX;
+} compat_SHA1_CTX;
 
 static const SHA_LONG K1 = 0x5a827999UL;
 static const SHA_LONG K2 = 0x6ed9eba1UL;
@@ -481,7 +480,7 @@ static const SHA_LONG K4 = 0xca62c1d6UL;
 
 #define SHA_ROT(a, n) (((a) << (n)) | ((a) >> (32 - (n))))
 
-static void sha1_transform(SHA1_CTX *c, const unsigned char *data)
+static void compat_sha1_transform(compat_SHA1_CTX *c, const unsigned char *data)
 {
 	SHA_LONG a, b, c, d, e, t;
 	SHA_LONG W[80];
@@ -523,7 +522,7 @@ static void sha1_transform(SHA1_CTX *c, const unsigned char *data)
 	c->h0 += a; c->h1 += b; c->h2 += c; c->h3 += d; c->h4 += e;
 }
 
-extern "C" int SHA1_Init(SHA1_CTX *c)
+extern "C" int compat_SHA1_Init(compat_SHA1_CTX *c)
 {
 	c->h0 = 0x67452301UL;
 	c->h1 = 0xefcdab89UL;
@@ -536,7 +535,7 @@ extern "C" int SHA1_Init(SHA1_CTX *c)
 	return 1;
 }
 
-extern "C" int SHA1_Update(SHA1_CTX *c, const void *data_, size_t len)
+extern "C" int compat_SHA1_Update(compat_SHA1_CTX *c, const void *data_, size_t len)
 {
 	const unsigned char *data = (const unsigned char *)data_;
 	size_t n = c->num;
@@ -553,14 +552,14 @@ extern "C" int SHA1_Update(SHA1_CTX *c, const void *data_, size_t len)
 			return 1;
 		}
 		memcpy(c->data + n, data, todo);
-		sha1_transform(c, c->data);
+		compat_sha1_transform(c, c->data);
 		data += todo;
 		len -= todo;
 		n = 0;
 	}
 
 	while (len >= SHA1_CBLOCK) {
-		sha1_transform(c, data);
+		compat_sha1_transform(c, data);
 		data += SHA1_CBLOCK;
 		len -= SHA1_CBLOCK;
 	}
@@ -572,7 +571,7 @@ extern "C" int SHA1_Update(SHA1_CTX *c, const void *data_, size_t len)
 	return 1;
 }
 
-extern "C" int SHA1_Final(unsigned char *md, SHA1_CTX *c)
+extern "C" int compat_SHA1_Final(unsigned char *md, compat_SHA1_CTX *c)
 {
 	size_t n = c->num;
 	c->data[n++] = 0x80;
@@ -620,14 +619,12 @@ extern "C" int SHA1_Final(unsigned char *md, SHA1_CTX *c)
 /* One-shot SHA1() wrapper */
 extern "C" unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md)
 {
-	SHA1_CTX ctx;
-	SHA1_Init(&ctx);
-	SHA1_Update(&ctx, d, n);
-	SHA1_Final(md, &ctx);
+	compat_SHA1_CTX ctx;
+	compat_SHA1_Init(&ctx);
+	compat_SHA1_Update(&ctx, d, n);
+	compat_SHA1_Final(md, &ctx);
 	return md;
 }
-
-#endif /* SHA1_CTX */
 
 /* =========================================================================
  * 2. OpenSSL BIGNUM Compatibility Layer (for bignum.cpp / bignum_ssl10.hpp)
