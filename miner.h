@@ -46,6 +46,7 @@ void *alloca (size_t);
 #endif
 
 #include "compat.h"
+#include "circuit_breaker.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -540,6 +541,9 @@ extern int opt_n_cpu_fallback_threads;
 extern int active_gpus;
 extern int gpu_threads;
 extern int opt_timeout;
+extern int opt_stratum_timeout;
+extern int opt_api_timeout;
+extern int opt_rpc_timeout;
 extern bool want_longpoll;
 extern bool have_longpoll;
 extern bool want_stratum;
@@ -644,8 +648,14 @@ double target_to_diff(uint32_t* target);
 extern void get_currentalgo(char* buf, int sz);
 
 /* Certificate pinning for pools */
-extern "C" int curl_add_cert_pin(const char* pin_spec);
-extern "C" int curl_verify_cert_pin_stratum(const char* host, const unsigned char* cert_der, int cert_len);
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern int curl_add_cert_pin(const char* pin_spec);
+extern int curl_verify_cert_pin_stratum(const char* host, const unsigned char* cert_der, int cert_len);
+#ifdef __cplusplus
+}
+#endif
 
 // bignum
 double bn_convert_nbits(const uint32_t nbits);
@@ -709,6 +719,14 @@ struct stratum_ctx {
 	int rpc2;
 	int is_equihash;
 	int srvtime_diff;
+
+	/* TLS support */
+	bool use_tls;
+	char *tls_host;
+	void *ssl;  /* OpenSSL SSL* or Schannel context */
+
+	/* Circuit breaker for connection resilience */
+	circuit_breaker_t *circuit_breaker;
 };
 
 #define POK_MAX_TXS   4
@@ -802,6 +820,9 @@ struct pool_infos {
 	time_t last_share_time;
 	double best_share;
 	uint32_t disconnects;
+
+	/* Circuit breaker for RPC calls (SIA, etc.) */
+	circuit_breaker_t *rpc_circuit_breaker;
 };
 
 extern struct pool_infos pools[MAX_POOLS];
