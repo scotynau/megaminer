@@ -40,7 +40,7 @@ __constant__ uint2 c_512_u2[16] =
 	{ 0x858efc16UL, 0x0801f2e2 }, { 0x71574e69UL, 0x636920d8 }
 };
 
-__constant__ uint8_t c_sigma[6][16] = {
+__constant__ uint8_t c_sigma_sp[6][16] = {
 	{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
 	{ 14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3 },
 	{ 11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4 },
@@ -74,8 +74,8 @@ __constant__ uint8_t c_sigma[6][16] = {
 }
 
 #define G(a,b,c,d,x) { \
-	uint32_t idx1 = c_sigma[i][x]; \
-	uint32_t idx2 = c_sigma[i][x+1]; \
+	uint32_t idx1 = c_sigma_sp[i][x]; \
+	uint32_t idx2 = c_sigma_sp[i][x+1]; \
 	v[a] += (block[idx1] ^ c_512_u2[idx2]) + v[b]; \
 	v[d] = eorswap32(v[d] , v[a]); \
 	v[c] += v[d]; \

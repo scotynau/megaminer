@@ -127,8 +127,7 @@ void quark_blake512_gpu_hash_80(uint32_t threads, uint32_t startNounce, void *ou
         for (int i=0; i < 16; ++i)
             buf[i] = c_PaddedMessage80[i];
 
-        // The test Nonce
-        const uint32_t nounce = startNounce + thread;
+        // The test Nonce - already declared above
         ((uint32_t*)buf)[19] = cuda_swab32(nounce);
 
         // Use exact SPH Blake512 compress
