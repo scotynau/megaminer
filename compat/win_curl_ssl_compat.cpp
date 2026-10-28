@@ -447,6 +447,185 @@ extern "C" int SHA256_Final(unsigned char *md, SHA256_CTX *c)
 }
 
 /* =========================================================================
+ * 1b. SHA256 One-Shot Wrapper (for ccminer.cpp merkle root)
+ * ========================================================================= */
+extern "C" unsigned char *SHA256(const unsigned char *d, size_t n, unsigned char *md)
+{
+	SHA256_CTX ctx;
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, d, n);
+	SHA256_Final(md, &ctx);
+	return md;
+}
+
+/* =========================================================================
+ * 1c. SHA-1 Implementation (for api.cpp WebSocket handshake)
+ * ========================================================================= */
+
+#define SHA1_DIGEST_LENGTH 20
+#define SHA1_CBLOCK 64
+
+typedef struct SHA1_CTX {
+	SHA_LONG h0, h1, h2, h3, h4;
+	SHA_LONG Nh, Nl;
+	unsigned char data[SHA1_CBLOCK];
+	unsigned int num;
+} SHA1_CTX;
+
+static const SHA_LONG K1 = 0x5a827999UL;
+static const SHA_LONG K2 = 0x6ed9eba1UL;
+static const SHA_LONG K3 = 0x8f1bbcdcUL;
+static const SHA_LONG K4 = 0xca62c1d6UL;
+
+#define SHA_ROT(a, n) (((a) << (n)) | ((a) >> (32 - (n))))
+
+static void sha1_transform(SHA1_CTX *c, const unsigned char *data)
+{
+	SHA_LONG a, b, c, d, e, t;
+	SHA_LONG W[80];
+	const unsigned char *p = data;
+	int i;
+
+	for (i = 0; i < 16; ++i) {
+		W[i] = (SHA_LONG)p[0] << 24 | (SHA_LONG)p[1] << 16 |
+		       (SHA_LONG)p[2] << 8 | (SHA_LONG)p[3];
+		p += 4;
+	}
+	for (i = 16; i < 80; ++i) {
+		W[i] = SHA_ROT(W[i-3] ^ W[i-8] ^ W[i-14] ^ W[i-16], 1);
+	}
+
+	a = c->h0;
+	b = c->h1;
+	c = c->h2;
+	d = c->h3;
+	e = c->h4;
+
+	for (i = 0; i < 20; ++i) {
+		t = SHA_ROT(a, 5) + ((b & c) | (~b & d)) + e + W[i] + K1;
+		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
+	}
+	for (i = 20; i < 40; ++i) {
+		t = SHA_ROT(a, 5) + (b ^ c ^ d) + e + W[i] + K2;
+		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
+	}
+	for (i = 40; i < 60; ++i) {
+		t = SHA_ROT(a, 5) + ((b & c) | (b & d) | (c & d)) + e + W[i] + K3;
+		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
+	}
+	for (i = 60; i < 80; ++i) {
+		t = SHA_ROT(a, 5) + (b ^ c ^ d) + e + W[i] + K4;
+		e = d; d = c; c = SHA_ROT(b, 30); b = a; a = t;
+	}
+
+	c->h0 += a; c->h1 += b; c->h2 += c; c->h3 += d; c->h4 += e;
+}
+
+extern "C" int SHA1_Init(SHA1_CTX *c)
+{
+	c->h0 = 0x67452301UL;
+	c->h1 = 0xefcdab89UL;
+	c->h2 = 0x98badcfeUL;
+	c->h3 = 0x10325476UL;
+	c->h4 = 0xc3d2e1f0UL;
+	c->Nh = 0;
+	c->Nl = 0;
+	c->num = 0;
+	return 1;
+}
+
+extern "C" int SHA1_Update(SHA1_CTX *c, const void *data_, size_t len)
+{
+	const unsigned char *data = (const unsigned char *)data_;
+	size_t n = c->num;
+	c->Nl += (SHA_LONG)(len << 3);
+	if (c->Nl < (SHA_LONG)(len << 3))
+		c->Nh++;
+	c->Nh += (SHA_LONG)(len >> 29);
+
+	if (n > 0) {
+		size_t todo = SHA1_CBLOCK - n;
+		if (len < todo) {
+			memcpy(c->data + n, data, len);
+			c->num = (unsigned int)(n + len);
+			return 1;
+		}
+		memcpy(c->data + n, data, todo);
+		sha1_transform(c, c->data);
+		data += todo;
+		len -= todo;
+		n = 0;
+	}
+
+	while (len >= SHA1_CBLOCK) {
+		sha1_transform(c, data);
+		data += SHA1_CBLOCK;
+		len -= SHA1_CBLOCK;
+	}
+
+	if (len > 0) {
+		memcpy(c->data, data, len);
+		c->num = (unsigned int)len;
+	}
+	return 1;
+}
+
+extern "C" int SHA1_Final(unsigned char *md, SHA1_CTX *c)
+{
+	size_t n = c->num;
+	c->data[n++] = 0x80;
+	if (n > SHA1_CBLOCK - 8) {
+		memset(c->data + n, 0, SHA1_CBLOCK - n);
+		sha1_transform(c, c->data);
+		n = 0;
+	}
+	memset(c->data + n, 0, SHA1_CBLOCK - 8 - n);
+	c->data[SHA1_CBLOCK - 8] = (unsigned char)(c->Nh >> 24);
+	c->data[SHA1_CBLOCK - 7] = (unsigned char)(c->Nh >> 16);
+	c->data[SHA1_CBLOCK - 6] = (unsigned char)(c->Nh >> 8);
+	c->data[SHA1_CBLOCK - 5] = (unsigned char)(c->Nh);
+	c->data[SHA1_CBLOCK - 4] = (unsigned char)(c->Nl >> 24);
+	c->data[SHA1_CBLOCK - 3] = (unsigned char)(c->Nl >> 16);
+	c->data[SHA1_CBLOCK - 2] = (unsigned char)(c->Nl >> 8);
+	c->data[SHA1_CBLOCK - 1] = (unsigned char)(c->Nl);
+	sha1_transform(c, c->data);
+
+	md[0] = (unsigned char)(c->h0 >> 24);
+	md[1] = (unsigned char)(c->h0 >> 16);
+	md[2] = (unsigned char)(c->h0 >> 8);
+	md[3] = (unsigned char)(c->h0);
+	md[4] = (unsigned char)(c->h1 >> 24);
+	md[5] = (unsigned char)(c->h1 >> 16);
+	md[6] = (unsigned char)(c->h1 >> 8);
+	md[7] = (unsigned char)(c->h1);
+	md[8] = (unsigned char)(c->h2 >> 24);
+	md[9] = (unsigned char)(c->h2 >> 16);
+	md[10] = (unsigned char)(c->h2 >> 8);
+	md[11] = (unsigned char)(c->h2);
+	md[12] = (unsigned char)(c->h3 >> 24);
+	md[13] = (unsigned char)(c->h3 >> 16);
+	md[14] = (unsigned char)(c->h3 >> 8);
+	md[15] = (unsigned char)(c->h3);
+	md[16] = (unsigned char)(c->h4 >> 24);
+	md[17] = (unsigned char)(c->h4 >> 16);
+	md[18] = (unsigned char)(c->h4 >> 8);
+	md[19] = (unsigned char)(c->h4);
+
+	memset(c, 0, sizeof(*c));
+	return 1;
+}
+
+/* One-shot SHA1() wrapper */
+extern "C" unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md)
+{
+	SHA1_CTX ctx;
+	SHA1_Init(&ctx);
+	SHA1_Update(&ctx, d, n);
+	SHA1_Final(md, &ctx);
+	return md;
+}
+
+/* =========================================================================
  * 2. OpenSSL BIGNUM Compatibility Layer (for bignum.cpp / bignum_ssl10.hpp)
  * ========================================================================= */
 
