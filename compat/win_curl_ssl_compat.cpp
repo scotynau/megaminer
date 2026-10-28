@@ -25,7 +25,12 @@
 
 /* Forward declarations */
 struct CurlEasyHandle;
-struct ParsedUrl;
+struct ParsedUrl {
+	bool is_https;
+	char host[512];
+	int port;
+	char path[1024];
+};
 static bool perform_cert_pin_check(struct CurlEasyHandle* h, const struct ParsedUrl* u, HINTERNET hRequest);
 
 #ifndef CURL_STATICLIB
@@ -1293,13 +1298,6 @@ extern "C" CURLcode curl_easy_getinfo(CURL *curl, CURLINFO info, ...)
 	va_end(ap);
 	return rc;
 }
-
-struct ParsedUrl {
-	bool is_https;
-	char host[512];
-	int port;
-	char path[1024];
-};
 
 static bool parse_url_parts(const char *raw_url, ParsedUrl *out)
 {
