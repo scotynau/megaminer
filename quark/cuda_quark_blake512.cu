@@ -9,7 +9,7 @@
 #define ROTR(x,n) ROTR64(x,n)
 
 // use sp kernel on SM 5+
-#define SP_KERNEL
+// #define SP_KERNEL  // Disabled: SP kernel uses custom Blake512, use non-SP with exact SPH
 
 #define USE_SHUFFLE 0
 
