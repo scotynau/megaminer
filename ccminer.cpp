@@ -233,6 +233,7 @@ int opt_api_mcast_port = 4068;
 char *opt_api_tls_cert = NULL;
 char *opt_api_tls_key = NULL;
 int opt_api_rate_limit = 10; /* default 10 req/s */
+bool opt_api_no_ws = false;  /* default false for compat */
 
 bool opt_stratum_stats = false;
 
@@ -346,6 +347,7 @@ Options:\n\
       --api-tls-cert=FILE  Certificate file for API HTTPS/TLS (enables HTTPS)\n\
       --api-tls-key=FILE   Private key file for API HTTPS/TLS\n\
       --api-rate-limit=N   Max API requests per second per IP (default: 10)\n\
+      --api-no-ws          Disable WebSocket (uses deprecated SHA-1); use REST + SSE /events\n\
       --max-temp=N      Only mine if gpu temp is less than specified value\n\
       --max-rate=N[KMG] Only mine if net hashrate is less than specified value\n\
       --max-diff=N      Only mine if net difficulty is less than specified value\n\
@@ -401,6 +403,7 @@ struct option options[] = {
 	{ "api-tls-cert", 1, NULL, 1038 },
 	{ "api-tls-key", 1, NULL, 1039 },
 	{ "api-rate-limit", 1, NULL, 1040 },
+	{ "api-no-ws", 0, NULL, 1041 },
 	{ "background", 0, NULL, 'B' },
 	{ "benchmark", 0, NULL, 1005 },
 	{ "cert", 1, NULL, 1001 },
@@ -3202,6 +3205,9 @@ void parse_arg(int key, char *arg)
 		if (v < 1 || v > 10000) // sanity check
 			show_usage_and_exit(1);
 		opt_api_rate_limit = v;
+		break;
+	case 1041: /* --api-no-ws */
+		opt_api_no_ws = true;
 		break;
 	case 'B':
 		opt_background = true;

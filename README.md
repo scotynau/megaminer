@@ -99,3 +99,62 @@ openssl s_client -connect pool.example.com:3333 -servername pool.example.com </d
   openssl x509 -fingerprint -sha256 -noout | \
   sed 's/://g' | cut -d= -f2 | tr '[:upper:]' '[:lower:]'
 ```
+
+---
+
+## API: WebSocket Deprecation & SSE Events
+
+### `--api-no-ws` Flag
+
+The legacy WebSocket API uses SHA-1 for the handshake (RFC 6455), which is cryptographically deprecated. To disable WebSocket and avoid legacy crypto:
+
+```bash
+ccminer --api-no-ws -b 127.0.0.1:4068
+```
+
+**Behavior:**
+- WebSocket upgrade requests (`Sec-WebSocket-Key` header) return **HTTP 400** with JSON error:
+  ```json
+  {"error":"WebSocket disabled (SHA-1 deprecated). Use REST API + SSE /events"}
+  ```
+- REST API endpoints (`/summary`, `/pool`, `/threads`, etc.) continue to work normally
+- Default: WebSocket enabled (`--api-no-ws=false`) for backward compatibility
+
+### SSE `/events` Endpoint (Recommended Replacement)
+
+Server-Sent Events (SSE) provides real-time streaming over HTTP/2 + TLS without legacy crypto handshake.
+
+**Endpoint:** `GET /events` (or `GET https://host:port/events` with TLS)
+
+**Response:** `Content-Type: text/event-stream`
+
+**Event format:**
+```text
+event: stats
+data: NAME=ccminer;VER=1.0;API=1.9;ALGO=x16r;GPUS=2;KHS=1234.56;SOLV=10;ACC=100;REJ=2;ACCMN=5.000;DIFF=1.234567;NETKHS=500000;POOLS=1;WAIT=0;UPTIME=3600;TS=1234567890|GPU=0;BUS=1;CARD=RTX 3080;TEMP=65.2;POWER=250;FAN=60;RPM=2400;FREQ=1800;MEMFREQ=9500;GPUF=1800;MEMF=9500;KHS=617.28;KHW=2.469;PLIM=100;ACC=50;REJ=1;HWF=0;I=20.0;THR=0|GPU=1;BUS=2;CARD=RTX 3080;TEMP=63.8;POWER=245;FAN=58;RPM=2350;FREQ=1800;MEMFREQ=9500;GPUF=1800;MEMF=9500;KHS=617.28;KHW=2.520;PLIM=100;ACC=50;REJ=1;HWF=0;I=20.0;THR=1|
+
+event: stats
+data: NAME=ccminer;VER=1.0;API=1.9;ALGO=x16r;GPUS=2;KHS=1235.12;SOLV=10;ACC=101;REJ=2;ACCMN=5.020;DIFF=1.234567;NETKHS=500000;POOLS=1;WAIT=0;UPTIME=3602;TS=1234567892|...
+```
+
+**Client example (curl):**
+```bash
+curl -N http://127.0.0.1:4068/events
+```
+
+**Client example (JavaScript/TypeScript):**
+```javascript
+const evtSource = new EventSource('https://miner.local:4068/events');
+evtSource.addEventListener('stats', (e) => {
+  const data = e.data; // pipe-delimited key=value pairs
+  const summary = parsePipeData(data); // parse NAME, KHS, ACC, REJ, etc.
+  updateDashboard(summary);
+});
+```
+
+**Advantages over WebSocket:**
+- No SHA-1 handshake (uses standard TLS)
+- Works over HTTP/2 multiplexed connections
+- Automatic reconnection built into browser EventSource API
+- Simpler client implementation (no framing protocol)
+- Firewall/proxy friendly (standard HTTP)

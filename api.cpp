@@ -31,6 +31,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 #include "miner.h"
 #include "nvml.h"
 #include "algos.h"
@@ -100,6 +103,25 @@ extern char *opt_api_mcast_addr;
 extern char *opt_api_mcast_code;
 extern char *opt_api_mcast_des;
 extern int opt_api_mcast_port;
+extern char *opt_api_tls_cert;
+extern char *opt_api_tls_key;
+extern int opt_api_rate_limit;
+extern bool opt_api_no_ws;
+
+// TLS context
+static SSL_CTX *api_ssl_ctx = NULL;
+static bool api_use_tls = false;
+
+// Rate limiting - token bucket per IP
+#define MAX_RATE_LIMIT_ENTRIES 1024
+struct rate_limit_entry {
+    in_addr_t ip;
+    double tokens;
+    time_t last_refill;
+    bool in_use;
+};
+static struct rate_limit_entry rate_limit_table[MAX_RATE_LIMIT_ENTRIES];
+static pthread_mutex_t rate_limit_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // current stratum...
 extern struct stratum_ctx stratum;
@@ -673,6 +695,345 @@ static int websocket_handshake(SOCKETTYPE c, char *result, char *clientkey)
 	return 0;
 }
 
+/* TLS initialization */
+static bool api_tls_init()
+{
+	if (!opt_api_tls_cert || !opt_api_tls_key) {
+		api_use_tls = false;
+		return true;
+	}
+
+	SSL_library_init();
+	SSL_load_error_strings();
+	OpenSSL_add_all_algorithms();
+
+	api_ssl_ctx = SSL_CTX_new(TLS_server_method());
+	if (!api_ssl_ctx) {
+		applog(LOG_ERR, "API: Failed to create SSL context");
+		return false;
+	}
+
+	/* Set minimum TLS version to 1.2 */
+	SSL_CTX_set_min_proto_version(api_ssl_ctx, TLS1_2_VERSION);
+
+	/* Load certificate */
+	if (SSL_CTX_use_certificate_file(api_ssl_ctx, opt_api_tls_cert, SSL_FILETYPE_PEM) <= 0) {
+		applog(LOG_ERR, "API: Failed to load certificate from %s", opt_api_tls_cert);
+		ERR_print_errors_fp(stderr);
+		SSL_CTX_free(api_ssl_ctx);
+		api_ssl_ctx = NULL;
+		return false;
+	}
+
+	/* Load private key */
+	if (SSL_CTX_use_PrivateKey_file(api_ssl_ctx, opt_api_tls_key, SSL_FILETYPE_PEM) <= 0) {
+		applog(LOG_ERR, "API: Failed to load private key from %s", opt_api_tls_key);
+		ERR_print_errors_fp(stderr);
+		SSL_CTX_free(api_ssl_ctx);
+		api_ssl_ctx = NULL;
+		return false;
+	}
+
+	/* Verify private key matches certificate */
+	if (!SSL_CTX_check_private_key(api_ssl_ctx)) {
+		applog(LOG_ERR, "API: Private key does not match certificate");
+		SSL_CTX_free(api_ssl_ctx);
+		api_ssl_ctx = NULL;
+		return false;
+	}
+
+	api_use_tls = true;
+	applog(LOG_INFO, "API: TLS enabled (HTTPS/WSS)");
+	return true;
+}
+
+/* Rate limiting - token bucket */
+static bool rate_limit_check(in_addr_t ip)
+{
+	if (opt_api_rate_limit <= 0)
+		return true; /* disabled */
+
+	time_t now = time(NULL);
+	bool allowed = false;
+
+	pthread_mutex_lock(&rate_limit_lock);
+
+	/* Find existing entry or free slot */
+	struct rate_limit_entry *entry = NULL;
+	for (int i = 0; i < MAX_RATE_LIMIT_ENTRIES; i++) {
+		if (rate_limit_table[i].in_use && rate_limit_table[i].ip == ip) {
+			entry = &rate_limit_table[i];
+			break;
+		}
+		if (!entry && !rate_limit_table[i].in_use) {
+			entry = &rate_limit_table[i];
+		}
+	}
+
+	if (!entry) {
+		/* Table full, allow but log warning */
+		pthread_mutex_unlock(&rate_limit_lock);
+		return true;
+	}
+
+	if (!entry->in_use) {
+		/* New entry */
+		entry->ip = ip;
+		entry->tokens = opt_api_rate_limit;
+		entry->last_refill = now;
+		entry->in_use = true;
+	}
+
+	/* Refill tokens */
+	double elapsed = difftime(now, entry->last_refill);
+	if (elapsed > 0) {
+		entry->tokens += elapsed * opt_api_rate_limit;
+		if (entry->tokens > opt_api_rate_limit)
+			entry->tokens = opt_api_rate_limit;
+		entry->last_refill = now;
+	}
+
+	/* Check and consume token */
+	if (entry->tokens >= 1.0) {
+		entry->tokens -= 1.0;
+		allowed = true;
+	}
+
+	pthread_mutex_unlock(&rate_limit_lock);
+	return allowed;
+}
+
+static void rate_limit_get_headers(in_addr_t ip, char *headers, size_t headers_len)
+{
+	if (opt_api_rate_limit <= 0) {
+		*headers = '\0';
+		return;
+	}
+
+	time_t now = time(NULL);
+	double tokens = 0;
+	int retry_after = 0;
+
+	pthread_mutex_lock(&rate_limit_lock);
+
+	for (int i = 0; i < MAX_RATE_LIMIT_ENTRIES; i++) {
+		if (rate_limit_table[i].in_use && rate_limit_table[i].ip == ip) {
+			tokens = rate_limit_table[i].tokens;
+			if (tokens < 1.0) {
+				retry_after = (int)ceil((1.0 - tokens) / opt_api_rate_limit);
+			}
+			break;
+		}
+	}
+
+	pthread_mutex_unlock(&rate_limit_lock);
+
+	snprintf(headers, headers_len,
+		"X-RateLimit-Limit: %d\r\n"
+		"X-RateLimit-Remaining: %d\r\n"
+		"Retry-After: %d\r\n",
+		opt_api_rate_limit, (int)tokens, retry_after);
+}
+
+/* Send result with rate limit headers */
+static int send_result_tls(SSL *ssl, SOCKETTYPE c, char *result, in_addr_t ip)
+{
+	char headers[256];
+	rate_limit_get_headers(ip, headers, sizeof(headers));
+
+	char *response;
+	int result_len = result ? strlen(result) : 0;
+	int headers_len = strlen(headers);
+
+	if (api_use_tls && ssl) {
+		/* HTTPS response with headers */
+		response = (char*) malloc(headers_len + result_len + 64);
+		if (!response) return -1;
+		sprintf(response, "HTTP/1.1 200 OK\r\n%sContent-Length: %d\r\n\r\n%s", headers, result_len, result ? result : "");
+		int n = SSL_write(ssl, response, strlen(response));
+		free(response);
+		return n;
+	} else {
+		/* HTTP response with headers */
+		response = (char*) malloc(headers_len + result_len + 64);
+		if (!response) return -1;
+		sprintf(response, "HTTP/1.1 200 OK\r\n%sContent-Length: %d\r\n\r\n%s", headers, result_len, result ? result : "");
+		int n = send(c, response, strlen(response), 0);
+		free(response);
+		return n;
+	}
+}
+
+/* Send 429 Too Many Requests */
+static void send_429(SSL *ssl, SOCKETTYPE c, in_addr_t ip)
+{
+	char headers[256];
+	rate_limit_get_headers(ip, headers, sizeof(headers));
+
+	char response[512];
+	snprintf(response, sizeof(response),
+		"HTTP/1.1 429 Too Many Requests\r\n"
+		"%s"
+		"Content-Length: 0\r\n"
+		"Connection: close\r\n"
+		"\r\n", headers);
+
+	if (api_use_tls && ssl) {
+		SSL_write(ssl, response, strlen(response));
+	} else {
+		send(c, response, strlen(response), 0);
+	}
+}
+
+/* Send HTTP redirect to HTTPS */
+static void send_redirect_https(SSL *ssl, SOCKETTYPE c, in_addr_t ip)
+{
+	char headers[256];
+	rate_limit_get_headers(ip, headers, sizeof(headers));
+
+	char response[512];
+	snprintf(response, sizeof(response),
+		"HTTP/1.1 301 Moved Permanently\r\n"
+		"%s"
+		"Location: https://%s:%d/\r\n"
+		"Content-Length: 0\r\n"
+		"Connection: close\r\n"
+		"\r\n", headers, opt_api_bind, opt_api_port);
+
+	if (api_use_tls && ssl) {
+		SSL_write(ssl, response, strlen(response));
+	} else {
+		send(c, response, strlen(response), 0);
+	}
+}
+
+/* WebSocket handshake with TLS support */
+static int websocket_handshake_tls(SSL *ssl, SOCKETTYPE c, char *result, char *clientkey, in_addr_t ip)
+{
+	char answer[256];
+	char inpkey[128] = { 0 };
+	char seckey[64];
+	uchar sha1[20];
+	SHA_CTX ctx;
+
+	if (opt_protocol)
+		applog(LOG_DEBUG, "clientkey: %s", clientkey);
+
+	sprintf(inpkey, "%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11", clientkey);
+
+	SHA1_Init(&ctx);
+	SHA1_Update(&ctx, inpkey, strlen(inpkey));
+	SHA1_Final(sha1, &ctx);
+
+	base64_encode(sha1, 20, seckey, sizeof(seckey));
+
+	char headers[256];
+	rate_limit_get_headers(ip, headers, sizeof(headers));
+
+	sprintf(answer,
+		"HTTP/1.1 101 Switching Protocols\r\n"
+		"Upgrade: WebSocket\r\n"
+		"Connection: Upgrade\r\n"
+		"Sec-WebSocket-Accept: %s\r\n"
+		"Sec-WebSocket-Protocol: text\r\n"
+		"%s"
+		"\r\n", seckey, headers);
+
+	// data result as tcp frame
+	uchar hd[10] = { 0 };
+	hd[0] = 129; // 0x1 text frame (FIN + opcode)
+	uint64_t datalen = (uint64_t) strlen(result);
+	uint8_t frames = 2;
+	if (datalen <= 125) {
+		hd[1] = (uchar) (datalen);
+	} else if (datalen <= 65535) {
+		hd[1] = (uchar) 126;
+		hd[2] = (uchar) (datalen >> 8);
+		hd[3] = (uchar) (datalen);
+		frames = 4;
+	} else {
+		hd[1] = (uchar) 127;
+		hd[2] = (uchar) (datalen >> 56);
+		hd[3] = (uchar) (datalen >> 48);
+		hd[4] = (uchar) (datalen >> 40);
+		hd[5] = (uchar) (datalen >> 32);
+		hd[6] = (uchar) (datalen >> 24);
+		hd[7] = (uchar) (datalen >> 16);
+		hd[8] = (uchar) (datalen >> 8);
+		hd[9] = (uchar) (datalen);
+		frames = 10;
+	}
+
+	size_t handlen = strlen(answer);
+	uchar *data = (uchar*) calloc(1, handlen + frames + (size_t) datalen + 1);
+	if (data == NULL)
+		return -1;
+	else {
+		uchar *p = data;
+		memcpy(p, answer, handlen);
+		p += handlen;
+		memcpy(p, hd, frames);
+		memcpy(p + frames, result, (size_t)datalen);
+		if (api_use_tls && ssl) {
+			SSL_write(ssl, (const char*)data, (int) (handlen + frames + datalen + 1));
+		} else {
+			send(c, (const char*)data, (int) (handlen + frames + datalen + 1), 0);
+		}
+		free(data);
+	}
+	return 0;
+}
+
+/* SSE (Server-Sent Events) endpoint for streaming stats */
+/* Returns text/event-stream with periodic miner stats */
+static int sse_events_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
+{
+	char headers[512];
+	char *response;
+	int n;
+
+	/* SSE headers */
+	snprintf(headers, sizeof(headers),
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Type: text/event-stream\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Connection: keep-alive\r\n"
+		"Access-Control-Allow-Origin: *\r\n"
+		"\r\n");
+
+	if (api_use_tls && ssl) {
+		n = SSL_write(ssl, headers, strlen(headers));
+	} else {
+		n = send(c, headers, strlen(headers), 0);
+	}
+	if (n <= 0)
+		return -1;
+
+	/* Stream stats every 2 seconds until client disconnects */
+	for (int i = 0; i < 300 && bye == 0 && !abort_flag; i++) { /* max 10 min */
+		char *summary = getsummary(NULL);
+		char *threads = getthreads(NULL);
+		char event_data[MYBUFSIZ];
+		int event_len;
+
+		event_len = snprintf(event_data, sizeof(event_data),
+			"event: stats\ndata: %s%s\n\n", summary, threads);
+
+		if (api_use_tls && ssl) {
+			n = SSL_write(ssl, event_data, event_len);
+		} else {
+			n = send(c, event_data, event_len, 0);
+		}
+
+		if (n <= 0)
+			break; /* client disconnected */
+
+		sleep(2);
+	}
+
+	return 0;
+}
+
 /*
  * Interpret --api-groups G:cmd1:cmd2:cmd3,P:cmd4,*,...
  */
@@ -1120,6 +1481,19 @@ static void api()
 
 	SOCKETTYPE c;
 	SOCKETTYPE *apisock;
+	SSL *ssl = NULL;
+
+	/* Initialize TLS if cert and key provided */
+	if (!api_tls_init()) {
+		applog(LOG_ERR, "API: TLS initialization failed");
+		return;
+	}
+
+	/* If TLS is enabled but binding to non-localhost, warn */
+	if (api_use_tls && strcmp(opt_api_bind, "127.0.0.1") != 0 && strcmp(opt_api_bind, "::1") != 0) {
+		applog(LOG_WARNING, "API: TLS enabled on non-localhost address %s", opt_api_bind);
+	}
+
 	if (!opt_api_port && opt_debug) {
 		applog(LOG_DEBUG, "API disabled");
 		return;
@@ -1150,27 +1524,18 @@ static void api()
 	serv.sin_addr.s_addr = inet_addr(addr); // TODO: allow bind to ip/interface
 	if (serv.sin_addr.s_addr == (in_addr_t)INVINETADDR) {
 		applog(LOG_ERR, "API initialisation 2 failed (%s)%s", strerror(errno), UNAVAILABLE);
-		// free(apisock); FIXME!!
 		return;
 	}
 
 	serv.sin_port = htons(port);
 
 #ifndef WIN32
-	// On linux with SO_REUSEADDR, bind will get the port if the previous
-	// socket is closed (even if it is still in TIME_WAIT) but fail if
-	// another program has it open - which is what we want
 	int optval = 1;
-	// If it doesn't work, we don't really care - just show a debug message
 	if (SOCKETFAIL(setsockopt(*apisock, SOL_SOCKET, SO_REUSEADDR, (void *)(&optval), sizeof(optval))))
 	        applog(LOG_DEBUG, "API setsockopt SO_REUSEADDR failed (ignored): %s", SOCKERRMSG);
 #else
-	// On windows a 2nd program can bind to a port>1024 already in use unless
-	// SO_EXCLUSIVEADDRUSE is used - however then the bind to a closed port
-	// in TIME_WAIT will fail until the timeout - so we leave the options alone
 #endif
 
-	// try for 1 minute ... in case the old one hasn't completely gone yet
 	bound = 0;
 	bindstart = time(NULL);
 	while (bound == 0) {
@@ -1179,7 +1544,6 @@ static void api()
 			if ((time(NULL) - bindstart) > 61)
 				break;
 			else if (opt_api_port == 4068) {
-				/* when port is default one, use first available */
 				if (opt_debug)
 					applog(LOG_DEBUG, "API bind to port %d failed, trying port %u",
 						port, (uint32_t) port+1);
@@ -1216,7 +1580,9 @@ static void api()
 		return;
 	}
 
-	if (opt_api_allow && strcmp(opt_api_bind, "127.0.0.1") == 0)
+	if (api_use_tls) {
+		applog(LOG_INFO, "API: HTTPS/WSS enabled on %s:%d", opt_api_bind, opt_api_port);
+	} else if (opt_api_allow && strcmp(opt_api_bind, "127.0.0.1") == 0)
 		applog(LOG_WARNING, "API open locally in full access mode on port %d", opt_api_port);
 	else if (opt_api_allow)
 		applog(LOG_WARNING, "API open in full access mode to %s on port %d", opt_api_allow, opt_api_port);
@@ -1239,7 +1605,22 @@ static void api()
 			CLOSESOCKET(*apisock);
 			free(apisock);
 			free(buffer);
+			if (api_ssl_ctx) {
+				SSL_CTX_free(api_ssl_ctx);
+				api_ssl_ctx = NULL;
+			}
 			return;
+		}
+
+		in_addr_t client_ip = cli.sin_addr.s_addr;
+
+		/* Rate limiting check */
+		if (!rate_limit_check(client_ip)) {
+			if (opt_debug)
+				applog(LOG_DEBUG, "API: rate limit exceeded for %s", inet_ntoa(cli.sin_addr));
+			send_429(NULL, c, client_ip);
+			CLOSESOCKET(c);
+			continue;
 		}
 
 		addrok = check_connect(&cli, &connectaddr, &group);
@@ -1250,28 +1631,50 @@ static void api()
 		if (addrok) {
 			bool fail;
 			char *wskey = NULL;
-			n = recv(c, &buf[0], SOCK_REC_BUFSZ, 0);
+			ssl = NULL;
 
-			fail = SOCKETFAIL(n);
+			/* Initialize TLS for this connection if enabled */
+			if (api_use_tls) {
+				ssl = SSL_new(api_ssl_ctx);
+				if (!ssl) {
+					applog(LOG_ERR, "API: Failed to create SSL object");
+					CLOSESOCKET(c);
+					continue;
+				}
+				SSL_set_fd(ssl, (int)c);
+				if (SSL_accept(ssl) <= 0) {
+					/* Client tried plain HTTP on HTTPS port - reject */
+					if (opt_debug)
+						applog(LOG_DEBUG, "API: SSL handshake failed from %s", connectaddr);
+					SSL_free(ssl);
+					CLOSESOCKET(c);
+					continue;
+				}
+				/* Read first request over TLS */
+				n = SSL_read(ssl, buf, SOCK_REC_BUFSZ);
+			} else {
+				/* Plain HTTP */
+				n = recv(c, &buf[0], SOCK_REC_BUFSZ, 0);
+			}
+
+			fail = (n <= 0);
 			if (fail)
 				buf[0] = '\0';
 			else if (n > 0 && buf[n-1] == '\n') {
-				/* telnet compat \r\n */
 				buf[n-1] = '\0'; n--;
 				if (n > 0 && buf[n-1] == '\r')
 					buf[n-1] = '\0';
 			}
 			buf[n] = '\0';
 
-			//if (opt_debug && opt_protocol && n > 0)
-			//	applog(LOG_DEBUG, "API: recv command: (%d) '%s'+char(%x)", n, buf, buf[n-1]);
-
 			if (!fail) {
 				char *msg = NULL;
-				/* Websocket requests compat. */
+				/* Extract request path for SSE/WebSocket detection */
+				char *request_path = NULL;
 				if ((msg = strstr(buf, "GET /")) && strlen(msg) > 5) {
 					char cmd[256] = { 0 };
 					sscanf(&msg[5], "%s\n", cmd);
+					request_path = strdup(cmd);
 					params = strchr(cmd, '/');
 					if (params)
 						*(params++) = '|';
@@ -1289,6 +1692,42 @@ static void api()
 					n = sprintf(buf, "%s", cmd);
 				}
 
+				/* Handle SSE /events endpoint */
+				if (request_path && strcmp(request_path, "/events") == 0) {
+					if (request_path) free(request_path);
+					sse_events_endpoint(ssl, c, client_ip);
+					if (ssl) {
+						SSL_shutdown(ssl);
+						SSL_free(ssl);
+					}
+					CLOSESOCKET(c);
+					continue;
+				}
+
+				/* WebSocket deprecation: return 400 if --api-no-ws is set */
+				if (wskey && opt_api_no_ws) {
+					char response[512];
+					snprintf(response, sizeof(response),
+						"HTTP/1.1 400 Bad Request\r\n"
+						"Content-Type: application/json\r\n"
+						"Content-Length: 86\r\n"
+						"Connection: close\r\n"
+						"\r\n"
+						"{\"error\":\"WebSocket disabled (SHA-1 deprecated). Use REST API + SSE /events\"}");
+					if (api_use_tls && ssl) {
+						SSL_write(ssl, response, strlen(response));
+					} else {
+						send(c, response, strlen(response), 0);
+					}
+					if (request_path) free(request_path);
+					if (ssl) {
+						SSL_shutdown(ssl);
+						SSL_free(ssl);
+					}
+					CLOSESOCKET(c);
+					continue;
+				}
+
 				params = strchr(buf, '|');
 				if (params != NULL)
 					*(params++) = '\0';
@@ -1299,19 +1738,23 @@ static void api()
 				for (i = 0; i < CMDMAX; i++) {
 					if (strcmp(buf, cmds[i].name) == 0 && strlen(buf)) {
 						if (params && strlen(params)) {
-							// remove possible trailing |
 							if (params[strlen(params)-1] == '|')
 								params[strlen(params)-1] = '\0';
 						}
 						result = (cmds[i].func)(params);
 						if (wskey) {
-							websocket_handshake(c, result, wskey);
+							websocket_handshake_tls(ssl, c, result, wskey, client_ip);
 							break;
 						}
-						send_result(c, result);
+						send_result_tls(ssl, c, result, client_ip);
 						break;
 					}
 				}
+				if (request_path) free(request_path);
+			}
+			if (ssl) {
+				SSL_shutdown(ssl);
+				SSL_free(ssl);
 			}
 			CLOSESOCKET(c);
 		}
@@ -1320,6 +1763,10 @@ static void api()
 	CLOSESOCKET(*apisock);
 	free(apisock);
 	free(buffer);
+	if (api_ssl_ctx) {
+		SSL_CTX_free(api_ssl_ctx);
+		api_ssl_ctx = NULL;
+	}
 }
 
 /* external access */
