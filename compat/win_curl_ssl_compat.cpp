@@ -11,6 +11,8 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <winhttp.h>
+#include <schannel.h>
+#include <secur32.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -429,172 +431,6 @@ extern "C" int SHA256_Final(unsigned char *md, SHA256_CTX *c)
 
 	memset(c, 0, sizeof(*c));
 	return 1;
-}
-
-extern "C" unsigned char *SHA256(const unsigned char *d, size_t n, unsigned char *md)
-{
-	static unsigned char m[SHA256_DIGEST_LENGTH];
-	SHA256_CTX c;
-
-	if (md == NULL)
-		md = m;
-	SHA256_Init(&c);
-	SHA256_Update(&c, d, n);
-	SHA256_Final(md, &c);
-	memset(&c, 0, sizeof(c));
-	return md;
-}
-
-/* =========================================================================
- * 1b. OpenSSL SHA-1 Compatibility Layer (SHA1_Init/Update/Final/Transform)
- * ========================================================================= */
-
-static const uint32_t k_sha1[4] = {
-	0x5A827999UL, 0x6ED9EBA1UL, 0x8F1BBCDCUL, 0xCA62C1D6UL
-};
-
-static inline uint32_t sha_rol32(uint32_t x, unsigned int n)
-{
-	return (x << n) | (x >> (32U - n));
-}
-
-extern "C" void SHA1_Transform(SHA_CTX *c, const unsigned char *data)
-{
-	uint32_t w[80];
-	uint32_t a, b, d, e, f, k, t, cc;
-	int i;
-
-	for (i = 0; i < 16; ++i)
-		w[i] = sha_be32_load(data + (i * 4));
-	for (i = 16; i < 80; ++i)
-		w[i] = sha_rol32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-
-	a = c->h0;
-	b = c->h1;
-	cc = c->h2;
-	d = c->h3;
-	e = c->h4;
-
-	for (i = 0; i < 80; ++i) {
-		if (i < 20) {
-			f = (b & cc) | ((~b) & d);
-			k = k_sha1[0];
-		} else if (i < 40) {
-			f = b ^ cc ^ d;
-			k = k_sha1[1];
-		} else if (i < 60) {
-			f = (b & cc) | (b & d) | (cc & d);
-			k = k_sha1[2];
-		} else {
-			f = b ^ cc ^ d;
-			k = k_sha1[3];
-		}
-		t = sha_rol32(a, 5) + f + e + k + w[i];
-		e = d;
-		d = cc;
-		cc = sha_rol32(b, 30);
-		b = a;
-		a = t;
-	}
-
-	c->h0 += a;
-	c->h1 += b;
-	c->h2 += cc;
-	c->h3 += d;
-	c->h4 += e;
-}
-
-extern "C" int SHA1_Init(SHA_CTX *c)
-{
-	memset(c, 0, sizeof(*c));
-	c->h0 = 0x67452301UL;
-	c->h1 = 0xefcdab89UL;
-	c->h2 = 0x98badcfeUL;
-	c->h3 = 0x10325476UL;
-	c->h4 = 0xc3d2e1f0UL;
-	return 1;
-}
-
-extern "C" int SHA1_Update(SHA_CTX *c, const void *data_, size_t len)
-{
-	if (len == 0)
-		return 1;
-
-	const unsigned char *data = (const unsigned char *)data_;
-	SHA_LONG l = c->Nl + (((SHA_LONG)len) << 3);
-	if (l < c->Nl)
-		c->Nh++;
-	c->Nh += (SHA_LONG)(len >> 29);
-	c->Nl = l;
-
-	unsigned char *p = (unsigned char *)c->data;
-	size_t n = c->num;
-	if (n != 0) {
-		size_t todo = SHA_CBLOCK - n;
-		if (len < todo) {
-			memcpy(p + n, data, len);
-			c->num += (unsigned int)len;
-			return 1;
-		}
-		memcpy(p + n, data, todo);
-		SHA1_Transform(c, p);
-		c->num = 0;
-		memset(p, 0, SHA_CBLOCK);
-		data += todo;
-		len -= todo;
-	}
-
-	while (len >= SHA_CBLOCK) {
-		SHA1_Transform(c, data);
-		data += SHA_CBLOCK;
-		len -= SHA_CBLOCK;
-	}
-
-	if (len > 0) {
-		memcpy(p, data, len);
-		c->num = (unsigned int)len;
-	}
-	return 1;
-}
-
-extern "C" int SHA1_Final(unsigned char *md, SHA_CTX *c)
-{
-	unsigned char *p = (unsigned char *)c->data;
-	size_t n = c->num;
-
-	p[n++] = 0x80;
-	if (n > SHA_LAST_BLOCK) {
-		memset(p + n, 0, SHA_CBLOCK - n);
-		SHA1_Transform(c, p);
-		n = 0;
-	}
-	memset(p + n, 0, SHA_LAST_BLOCK - n);
-	sha_be32_store(p + SHA_CBLOCK - 8, c->Nh);
-	sha_be32_store(p + SHA_CBLOCK - 4, c->Nl);
-	SHA1_Transform(c, p);
-
-	sha_be32_store(md, c->h0);
-	sha_be32_store(md + 4, c->h1);
-	sha_be32_store(md + 8, c->h2);
-	sha_be32_store(md + 12, c->h3);
-	sha_be32_store(md + 16, c->h4);
-
-	memset(c, 0, sizeof(*c));
-	return 1;
-}
-
-extern "C" unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md)
-{
-	static unsigned char m[SHA_DIGEST_LENGTH];
-	SHA_CTX c;
-
-	if (md == NULL)
-		md = m;
-	SHA1_Init(&c);
-	SHA1_Update(&c, d, n);
-	SHA1_Final(md, &c);
-	memset(&c, 0, sizeof(c));
-	return md;
 }
 
 /* =========================================================================
@@ -1120,6 +956,8 @@ struct CurlEasyHandle {
 	long connect_only;
 	long connecttimeout;
 	long timeout;
+	long connecttimeout_ms;
+	long timeout_ms;
 	long tcp_keepalive;
 	long tcp_keepidle;
 	long tcp_keepintvl;
@@ -1146,6 +984,14 @@ struct CurlEasyHandle {
 
 	struct curl_slist *httpheader;
 	curl_socket_t sock;
+	/* Schannel TLS state */
+	bool schannel_initialized;
+	CtxtHandle schannel_ctxt;
+	CredHandle schannel_cred;
+	SecPkgContext_StreamSizes schannel_stream_sizes;
+	char *schannel_recv_buffer;
+	size_t schannel_recv_buffer_len;
+	size_t schannel_recv_buffer_pos;
 };
 
 static void set_curl_err(CurlEasyHandle *h, const char *fmt, ...)
@@ -1221,6 +1067,10 @@ extern "C" CURL *curl_easy_init(void)
 	h->sock = CURL_SOCKET_BAD;
 	h->ssl_verifypeer = 1;
 	h->postfieldsize = -1;
+	h->connecttimeout = 0;
+	h->timeout = 0;
+	h->connecttimeout_ms = 0;
+	h->timeout_ms = 0;
 	return (CURL *)h;
 }
 
@@ -1229,11 +1079,23 @@ extern "C" void curl_easy_reset(CURL *curl)
 	if (!curl)
 		return;
 	CurlEasyHandle *h = (CurlEasyHandle *)curl;
+	/* Preserve socket ownership: curl_easy_cleanup will close saved_sock if != CURL_SOCKET_BAD */
 	curl_socket_t saved_sock = h->sock;
+	/* Cleanup Schannel state before reset */
+	if (h->schannel_initialized) {
+		DeleteSecurityContext(&h->schannel_ctxt);
+		FreeCredentialsHandle(&h->schannel_cred);
+		h->schannel_initialized = false;
+	}
+	free(h->schannel_recv_buffer);
 	memset(h, 0, sizeof(*h));
 	h->sock = saved_sock;
 	h->ssl_verifypeer = 1;
 	h->postfieldsize = -1;
+	h->connecttimeout = 0;
+	h->timeout = 0;
+	h->connecttimeout_ms = 0;
+	h->timeout_ms = 0;
 }
 
 extern "C" void curl_easy_cleanup(CURL *curl)
@@ -1303,6 +1165,12 @@ extern "C" CURLcode curl_easy_setopt(CURL *curl, CURLoption option, ...)
 		break;
 	case CURLOPT_TIMEOUT:
 		h->timeout = va_arg(ap, long);
+		break;
+	case CURLOPT_CONNECTTIMEOUT_MS:
+		h->connecttimeout_ms = va_arg(ap, long);
+		break;
+	case CURLOPT_TIMEOUT_MS:
+		h->timeout_ms = va_arg(ap, long);
 		break;
 	case CURLOPT_TCP_KEEPALIVE:
 		h->tcp_keepalive = va_arg(ap, long);
@@ -1476,12 +1344,26 @@ static bool parse_url_parts(const char *raw_url, ParsedUrl *out)
 	return out->host[0] != '\0' && out->port > 0;
 }
 
+/* Forward declaration */
+static CURLcode perform_tls_handshake(CurlEasyHandle *h, const ParsedUrl *u, curl_socket_t s);
+
 static CURLcode perform_connect_only(CurlEasyHandle *h, const ParsedUrl *u)
 {
 	if (h->sock != CURL_SOCKET_BAD) {
 		closesocket(h->sock);
 		h->sock = CURL_SOCKET_BAD;
 	}
+	
+	/* Cleanup any existing Schannel context */
+	if (h->schannel_initialized) {
+		DeleteSecurityContext(&h->schannel_ctxt);
+		FreeCredentialsHandle(&h->schannel_cred);
+		h->schannel_initialized = false;
+	}
+	free(h->schannel_recv_buffer);
+	h->schannel_recv_buffer = NULL;
+	h->schannel_recv_buffer_len = 0;
+	h->schannel_recv_buffer_pos = 0;
 
 	char port_str[16];
 	snprintf(port_str, sizeof(port_str), "%d", u->port);
@@ -1497,6 +1379,22 @@ static CURLcode perform_connect_only(CurlEasyHandle *h, const ParsedUrl *u)
 	if (gai != 0 || !res) {
 		set_curl_err(h, "Could not resolve host: %s (WSA error %d)", u->host, WSAGetLastError());
 		return CURLE_COULDNT_RESOLVE_HOST;
+	}
+
+	/* Determine connect timeout in milliseconds */
+	long connect_timeout_ms = 0;
+	if (h->connecttimeout_ms > 0) {
+		connect_timeout_ms = h->connecttimeout_ms;
+	} else if (h->connecttimeout > 0) {
+		connect_timeout_ms = h->connecttimeout * 1000;
+	}
+
+	/* Determine socket I/O timeout in milliseconds */
+	long io_timeout_ms = 0;
+	if (h->timeout_ms > 0) {
+		io_timeout_ms = h->timeout_ms;
+	} else if (h->timeout > 0) {
+		io_timeout_ms = h->timeout * 1000;
 	}
 
 	curl_socket_t s = CURL_SOCKET_BAD;
@@ -1526,8 +1424,15 @@ static CURLcode perform_connect_only(CurlEasyHandle *h, const ParsedUrl *u)
 			}
 		}
 
+		/* Set socket send/receive timeouts */
+		if (io_timeout_ms > 0) {
+			int timeout_ms = (int)io_timeout_ms;
+			setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+			setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+		}
+
 		/* Connect with timeout if requested */
-		if (h->connecttimeout > 0) {
+		if (connect_timeout_ms > 0) {
 			u_long nonblock = 1;
 			ioctlsocket(s, FIONBIO, &nonblock);
 			int rc = connect(s, ai->ai_addr, (int)ai->ai_addrlen);
@@ -1540,8 +1445,8 @@ static CURLcode perform_connect_only(CurlEasyHandle *h, const ParsedUrl *u)
 					FD_SET(s, &wfds);
 					FD_SET(s, &efds);
 					struct timeval tv;
-					tv.tv_sec = h->connecttimeout;
-					tv.tv_usec = 0;
+					tv.tv_sec = connect_timeout_ms / 1000;
+					tv.tv_usec = (connect_timeout_ms % 1000) * 1000;
 					int sel = select(0, NULL, &wfds, &efds, &tv);
 					if (sel > 0 && FD_ISSET(s, &wfds) && !FD_ISSET(s, &efds)) {
 						int so_err = 0;
@@ -1549,6 +1454,8 @@ static CURLcode perform_connect_only(CurlEasyHandle *h, const ParsedUrl *u)
 						getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&so_err, &so_len);
 						if (so_err == 0)
 							rc = 0;
+					} else {
+						rc = SOCKET_ERROR;
 					}
 				}
 			}
@@ -1568,11 +1475,227 @@ static CURLcode perform_connect_only(CurlEasyHandle *h, const ParsedUrl *u)
 	freeaddrinfo(res);
 
 	if (s == CURL_SOCKET_BAD) {
+		h->sock = CURL_SOCKET_BAD;
 		set_curl_err(h, "Failed to connect to %s port %d", u->host, u->port);
 		return CURLE_COULDNT_CONNECT;
 	}
 
+	/* If HTTPS, perform TLS handshake via Schannel */
+	if (u->is_https) {
+		CURLcode tls_rc = perform_tls_handshake(h, u, s);
+		if (tls_rc != CURLE_OK) {
+			closesocket(s);
+			h->sock = CURL_SOCKET_BAD;
+			return tls_rc;
+		}
+	}
+
 	h->sock = s;
+	return CURLE_OK;
+}
+
+/* Schannel TLS handshake for CONNECT_ONLY */
+static CURLcode perform_tls_handshake(CurlEasyHandle *h, const ParsedUrl *u, curl_socket_t s)
+{
+	SECURITY_STATUS sec_status;
+	TimeStamp expiry;
+	
+	/* Acquire credentials handle */
+	SCHANNEL_CRED schannel_cred = { 0 };
+	schannel_cred.dwVersion = SCHANNEL_CRED_VERSION;
+	schannel_cred.grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT;
+	schannel_cred.dwFlags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_AUTO_CRED_VALIDATION;
+	
+	sec_status = AcquireCredentialsHandleA(
+		NULL,                    /* Default principal */
+		UNISP_NAME_A,            /* Use Schannel */
+		SECPKG_CRED_OUTBOUND,    /* Outbound (client) */
+		NULL,                    /* Default logon ID */
+		&schannel_cred,          /* Credentials */
+		NULL,                    /* No GetKey function */
+		NULL,                    /* No GetKey argument */
+		&h->schannel_cred,       /* Output credentials handle */
+		&expiry                  /* Expiry time */
+	);
+	
+	if (sec_status != SEC_E_OK) {
+		set_curl_err(h, "AcquireCredentialsHandle failed: 0x%08lx", sec_status);
+		return CURLE_SSL_CONNECT_ERROR;
+	}
+	
+	/* Initialize security context */
+	SecBufferDesc out_buffer_desc;
+	SecBuffer out_buffer;
+	out_buffer_desc.ulVersion = SECBUFFER_VERSION;
+	out_buffer_desc.cBuffers = 1;
+	out_buffer_desc.pBuffers = &out_buffer;
+	out_buffer.BufferType = SECBUFFER_TOKEN;
+	out_buffer.cbBuffer = 0;
+	out_buffer.pvBuffer = NULL;
+	
+	/* Client hello - first call to InitializeSecurityContext */
+	DWORD context_attr = 0;
+	sec_status = InitializeSecurityContextA(
+		&h->schannel_cred,
+		NULL,                    /* No input context (first call) */
+		(const SEC_CHAR*)u->host, /* Target name (for SNI) */
+		ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM,
+		0,                       /* Reserved */
+		SECURITY_NATIVE_DREP,    /* Data representation */
+		NULL,                    /* No input buffer (first call) */
+		0,                       /* Reserved */
+		&h->schannel_ctxt,       /* Output context */
+		&out_buffer_desc,        /* Output buffer */
+		&context_attr,           /* Context attributes */
+		&expiry                  /* Expiry time */
+	);
+	
+	if (sec_status != SEC_I_CONTINUE_NEEDED && sec_status != SEC_E_OK) {
+		FreeCredentialsHandle(&h->schannel_cred);
+		set_curl_err(h, "InitializeSecurityContext (client hello) failed: 0x%08lx", sec_status);
+		return CURLE_SSL_CONNECT_ERROR;
+	}
+	
+	/* Send client hello */
+	if (out_buffer.cbBuffer > 0 && out_buffer.pvBuffer) {
+		int sent = send(s, (const char*)out_buffer.pvBuffer, out_buffer.cbBuffer, 0);
+		FreeContextBuffer(out_buffer.pvBuffer);
+		if (sent == SOCKET_ERROR || sent != (int)out_buffer.cbBuffer) {
+			set_curl_err(h, "Failed to send client hello");
+			return CURLE_SEND_ERROR;
+		}
+	}
+	
+	/* Receive server response and continue handshake */
+	SecBufferDesc in_buffer_desc;
+	SecBuffer in_buffers[2];
+	char recv_buf[4096];
+	
+	while (sec_status == SEC_I_CONTINUE_NEEDED || sec_status == SEC_E_INCOMPLETE_MESSAGE) {
+		/* Receive data from server */
+		int recv_len = recv(s, recv_buf, sizeof(recv_buf), 0);
+		if (recv_len == SOCKET_ERROR) {
+			int err = WSAGetLastError();
+			if (err == WSAEWOULDBLOCK) {
+				/* Would block, wait a bit */
+				fd_set rfds;
+				FD_ZERO(&rfds);
+				FD_SET(s, &rfds);
+				struct timeval tv = { 5, 0 };
+				select(0, &rfds, NULL, NULL, &tv);
+				continue;
+			}
+			set_curl_err(h, "recv failed during TLS handshake: %d", err);
+			return CURLE_RECV_ERROR;
+		}
+		if (recv_len == 0) {
+			set_curl_err(h, "Server closed connection during TLS handshake");
+			return CURLE_SSL_CONNECT_ERROR;
+		}
+		
+		/* Prepare input buffers */
+		in_buffer_desc.ulVersion = SECBUFFER_VERSION;
+		in_buffer_desc.cBuffers = 2;
+		in_buffer_desc.pBuffers = in_buffers;
+		in_buffers[0].BufferType = SECBUFFER_TOKEN;
+		in_buffers[0].cbBuffer = recv_len;
+		in_buffers[0].pvBuffer = recv_buf;
+		in_buffers[1].BufferType = SECBUFFER_EMPTY;
+		in_buffers[1].cbBuffer = 0;
+		in_buffers[1].pvBuffer = NULL;
+		
+		/* Prepare output buffer */
+		out_buffer_desc.ulVersion = SECBUFFER_VERSION;
+		out_buffer_desc.cBuffers = 1;
+		out_buffer_desc.pBuffers = &out_buffer;
+		out_buffer.BufferType = SECBUFFER_TOKEN;
+		out_buffer.cbBuffer = 0;
+		out_buffer.pvBuffer = NULL;
+		
+		/* Continue handshake */
+		sec_status = InitializeSecurityContextA(
+			&h->schannel_cred,
+			&h->schannel_ctxt,     /* Input context */
+			(const SEC_CHAR*)u->host,
+			ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM,
+			0,
+			SECURITY_NATIVE_DREP,
+			&in_buffer_desc,       /* Input buffer */
+			0,
+			&h->schannel_ctxt,     /* Output context */
+			&out_buffer_desc,      /* Output buffer */
+			&context_attr,
+			&expiry
+		);
+		
+		/* Send output token if any */
+		if (out_buffer.cbBuffer > 0 && out_buffer.pvBuffer) {
+			int sent = send(s, (const char*)out_buffer.pvBuffer, out_buffer.cbBuffer, 0);
+			FreeContextBuffer(out_buffer.pvBuffer);
+			if (sent == SOCKET_ERROR || sent != (int)out_buffer.cbBuffer) {
+				set_curl_err(h, "Failed to send TLS handshake data");
+				return CURLE_SEND_ERROR;
+			}
+		}
+		
+		/* If SEC_E_INCOMPLETE_MESSAGE, need more data */
+		if (sec_status == SEC_E_INCOMPLETE_MESSAGE) {
+			continue;
+		}
+	}
+	
+	if (sec_status != SEC_E_OK) {
+		set_curl_err(h, "TLS handshake failed: 0x%08lx", sec_status);
+		return CURLE_SSL_CONNECT_ERROR;
+	}
+	
+	/* Handshake complete - verify certificate pinning */
+	/* Query the certificate from the Schannel context */
+	PCCERT_CONTEXT cert_ctx = NULL;
+	SecPkgContext_IssuerListInfoEx issuer_list = { 0 };
+	
+	/* Get the remote certificate */
+	sec_status = QueryContextAttributesA(
+		&h->schannel_ctxt,
+		SECPKG_ATTR_REMOTE_CERT_CONTEXT,
+		&cert_ctx
+	);
+	
+	if (sec_status == SEC_E_OK && cert_ctx) {
+		/* Verify certificate pinning using existing function */
+		if (!verify_cert_pin(u->host, cert_ctx)) {
+			CertFreeCertificateContext(cert_ctx);
+			set_curl_err(h, "Certificate pin verification failed for %s", u->host);
+			return CURLE_SSL_PINNEDPUBKEYNOTMATCH;
+		}
+		CertFreeCertificateContext(cert_ctx);
+		applog(LOG_NOTICE, "Certificate pin verified for %s (via Schannel)", u->host);
+	} else {
+		applog(LOG_WARNING, "Could not retrieve peer certificate for pin verification");
+	}
+	
+	/* Get stream sizes for encryption/decryption */
+	sec_status = QueryContextAttributesA(
+		&h->schannel_ctxt,
+		SECPKG_ATTR_STREAM_SIZES,
+		&h->schannel_stream_sizes
+	);
+	
+	if (sec_status != SEC_E_OK) {
+		set_curl_err(h, "QueryContextAttributes(STREAM_SIZES) failed: 0x%08lx", sec_status);
+		return CURLE_SSL_CONNECT_ERROR;
+	}
+	
+	/* Allocate receive buffer for decrypted data */
+	h->schannel_recv_buffer_len = h->schannel_stream_sizes.cbHeader + h->schannel_stream_sizes.cbMaximumMessage + h->schannel_stream_sizes.cbTrailer;
+	h->schannel_recv_buffer = (char*)malloc(h->schannel_recv_buffer_len);
+	if (!h->schannel_recv_buffer) {
+		set_curl_err(h, "Failed to allocate Schannel receive buffer");
+		return CURLE_OUT_OF_MEMORY;
+	}
+	h->schannel_recv_buffer_pos = 0;
+	
+	h->schannel_initialized = true;
 	return CURLE_OK;
 }
 
@@ -1625,11 +1748,35 @@ static CURLcode perform_http_request(CurlEasyHandle *h, const ParsedUrl *u)
 		return CURLE_FAILED_INIT;
 	}
 
-	if (h->connecttimeout > 0 || h->timeout > 0) {
-		int c_ms = (h->connecttimeout > 0) ? (int)(h->connecttimeout * 1000) : 30000;
-		int t_ms = (h->timeout > 0) ? (int)(h->timeout * 1000) : 30000;
-		WinHttpSetTimeouts(hSession, c_ms, c_ms, t_ms, t_ms);
+	/* Determine timeouts in milliseconds */
+	int resolve_timeout_ms = 0;
+	int connect_timeout_ms = 0;
+	int send_timeout_ms = 0;
+	int receive_timeout_ms = 0;
+
+	if (h->connecttimeout_ms > 0) {
+		connect_timeout_ms = (int)h->connecttimeout_ms;
+		resolve_timeout_ms = connect_timeout_ms;
+	} else if (h->connecttimeout > 0) {
+		connect_timeout_ms = (int)(h->connecttimeout * 1000);
+		resolve_timeout_ms = connect_timeout_ms;
+	} else {
+		connect_timeout_ms = 30000;
+		resolve_timeout_ms = 30000;
 	}
+
+	if (h->timeout_ms > 0) {
+		send_timeout_ms = (int)h->timeout_ms;
+		receive_timeout_ms = send_timeout_ms;
+	} else if (h->timeout > 0) {
+		send_timeout_ms = (int)(h->timeout * 1000);
+		receive_timeout_ms = send_timeout_ms;
+	} else {
+		send_timeout_ms = 30000;
+		receive_timeout_ms = 30000;
+	}
+
+	WinHttpSetTimeouts(hSession, resolve_timeout_ms, connect_timeout_ms, send_timeout_ms, receive_timeout_ms);
 
 	LPWSTR w_host = utf8_to_wide(u->host);
 	HINTERNET hConnect = WinHttpConnect(hSession, w_host ? w_host : L"localhost", (INTERNET_PORT)u->port, 0);
@@ -1792,6 +1939,226 @@ static CURLcode perform_http_request(CurlEasyHandle *h, const ParsedUrl *u)
 	WinHttpCloseHandle(hConnect);
 	WinHttpCloseHandle(hSession);
 	return CURLE_OK;
+}
+
+/* Schannel encrypted send */
+extern "C" CURLcode curl_easy_send(CURL *curl, const void *buffer, size_t buflen, size_t *nwritten)
+{
+	if (!curl || !buffer || !nwritten)
+		return CURLE_BAD_FUNCTION_ARGUMENT;
+	
+	CurlEasyHandle *h = (CurlEasyHandle *)curl;
+	*nwritten = 0;
+	
+	if (h->sock == CURL_SOCKET_BAD) {
+		return CURLE_SEND_ERROR;
+	}
+	
+	if (h->schannel_initialized) {
+		/* Encrypt and send via Schannel */
+		SecBufferDesc out_buffer_desc;
+		SecBuffer out_buffers[4];
+		SECURITY_STATUS sec_status;
+		
+		/* Prepare buffers for encryption:
+		 * Buffer 0: Header (stream_sizes.cbHeader)
+		 * Buffer 1: Data (buflen)
+		 * Buffer 2: Trailer (stream_sizes.cbTrailer)
+		 * Buffer 3: Empty
+		 */
+		size_t total_size = h->schannel_stream_sizes.cbHeader + buflen + h->schannel_stream_sizes.cbTrailer;
+		char *encrypt_buf = (char*)malloc(total_size);
+		if (!encrypt_buf) {
+			return CURLE_OUT_OF_MEMORY;
+		}
+		
+		/* Copy data after header space */
+		memcpy(encrypt_buf + h->schannel_stream_sizes.cbHeader, buffer, buflen);
+		
+		out_buffer_desc.ulVersion = SECBUFFER_VERSION;
+		out_buffer_desc.cBuffers = 4;
+		out_buffer_desc.pBuffers = out_buffers;
+		out_buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
+		out_buffers[0].cbBuffer = h->schannel_stream_sizes.cbHeader;
+		out_buffers[0].pvBuffer = encrypt_buf;
+		out_buffers[1].BufferType = SECBUFFER_DATA;
+		out_buffers[1].cbBuffer = (unsigned long)buflen;
+		out_buffers[1].pvBuffer = encrypt_buf + h->schannel_stream_sizes.cbHeader;
+		out_buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
+		out_buffers[2].cbBuffer = h->schannel_stream_sizes.cbTrailer;
+		out_buffers[2].pvBuffer = encrypt_buf + h->schannel_stream_sizes.cbHeader + buflen;
+		out_buffers[3].BufferType = SECBUFFER_EMPTY;
+		out_buffers[3].cbBuffer = 0;
+		out_buffers[3].pvBuffer = NULL;
+		
+		sec_status = EncryptMessage(&h->schannel_ctxt, 0, &out_buffer_desc, 0);
+		if (sec_status != SEC_E_OK) {
+			free(encrypt_buf);
+			set_curl_err(h, "EncryptMessage failed: 0x%08lx", sec_status);
+			return CURLE_SEND_ERROR;
+		}
+		
+		/* Send encrypted data (header + data + trailer) */
+		size_t encrypted_len = out_buffers[0].cbBuffer + out_buffers[1].cbBuffer + out_buffers[2].cbBuffer;
+		int sent = send(h->sock, encrypt_buf, (int)encrypted_len, 0);
+		free(encrypt_buf);
+		
+		if (sent == SOCKET_ERROR) {
+			int err = WSAGetLastError();
+			if (err == WSAEWOULDBLOCK) {
+				return CURLE_AGAIN;
+			}
+			set_curl_err(h, "send failed: %d", err);
+			return CURLE_SEND_ERROR;
+		}
+		
+		*nwritten = buflen;
+		return CURLE_OK;
+	} else {
+		/* Plain TCP send */
+		int sent = send(h->sock, (const char*)buffer, (int)buflen, 0);
+		if (sent == SOCKET_ERROR) {
+			int err = WSAGetLastError();
+			if (err == WSAEWOULDBLOCK) {
+				return CURLE_AGAIN;
+			}
+			set_curl_err(h, "send failed: %d", err);
+			return CURLE_SEND_ERROR;
+		}
+		*nwritten = sent;
+		return CURLE_OK;
+	}
+}
+
+/* Schannel encrypted recv */
+extern "C" CURLcode curl_easy_recv(CURL *curl, void *buffer, size_t buflen, size_t *nread)
+{
+	if (!curl || !buffer || !nread)
+		return CURLE_BAD_FUNCTION_ARGUMENT;
+	
+	CurlEasyHandle *h = (CurlEasyHandle *)curl;
+	*nread = 0;
+	
+	if (h->sock == CURL_SOCKET_BAD) {
+		return CURLE_RECV_ERROR;
+	}
+	
+	if (h->schannel_initialized) {
+		/* Decrypt data from Schannel */
+		
+		/* First, check if we have decrypted data in our buffer */
+		if (h->schannel_recv_buffer_pos > 0) {
+			size_t available = h->schannel_recv_buffer_len - h->schannel_recv_buffer_pos;
+			size_t to_copy = (buflen < available) ? buflen : available;
+			memcpy(buffer, h->schannel_recv_buffer + h->schannel_recv_buffer_pos, to_copy);
+			h->schannel_recv_buffer_pos += to_copy;
+			*nread = to_copy;
+			
+			/* If buffer exhausted, reset position */
+			if (h->schannel_recv_buffer_pos >= h->schannel_recv_buffer_len) {
+				h->schannel_recv_buffer_pos = 0;
+				h->schannel_recv_buffer_len = 0;
+			}
+			return CURLE_OK;
+		}
+		
+		/* Receive encrypted data from socket */
+		char *recv_buf = (char*)malloc(h->schannel_stream_sizes.cbHeader + h->schannel_stream_sizes.cbMaximumMessage + h->schannel_stream_sizes.cbTrailer);
+		if (!recv_buf) {
+			return CURLE_OUT_OF_MEMORY;
+		}
+		
+		int recv_len = recv(h->sock, recv_buf, h->schannel_stream_sizes.cbHeader + h->schannel_stream_sizes.cbMaximumMessage + h->schannel_stream_sizes.cbTrailer, 0);
+		if (recv_len == SOCKET_ERROR) {
+			int err = WSAGetLastError();
+			free(recv_buf);
+			if (err == WSAEWOULDBLOCK) {
+				return CURLE_AGAIN;
+			}
+			set_curl_err(h, "recv failed: %d", err);
+			return CURLE_RECV_ERROR;
+		}
+		if (recv_len == 0) {
+			free(recv_buf);
+			/* Connection closed */
+			return CURLE_OK;
+		}
+		
+		/* Decrypt the received data */
+		SecBufferDesc in_buffer_desc;
+		SecBuffer in_buffers[4];
+		
+		in_buffer_desc.ulVersion = SECBUFFER_VERSION;
+		in_buffer_desc.cBuffers = 4;
+		in_buffer_desc.pBuffers = in_buffers;
+		in_buffers[0].BufferType = SECBUFFER_DATA;
+		in_buffers[0].cbBuffer = recv_len;
+		in_buffers[0].pvBuffer = recv_buf;
+		in_buffers[1].BufferType = SECBUFFER_EMPTY;
+		in_buffers[1].cbBuffer = 0;
+		in_buffers[1].pvBuffer = NULL;
+		in_buffers[2].BufferType = SECBUFFER_EMPTY;
+		in_buffers[2].cbBuffer = 0;
+		in_buffers[2].pvBuffer = NULL;
+		in_buffers[3].BufferType = SECBUFFER_EMPTY;
+		in_buffers[3].cbBuffer = 0;
+		in_buffers[3].pvBuffer = NULL;
+		
+		SECURITY_STATUS sec_status = DecryptMessage(&h->schannel_ctxt, &in_buffer_desc, 0, NULL);
+		if (sec_status != SEC_E_OK && sec_status != SEC_I_CONTEXT_EXPIRED) {
+			free(recv_buf);
+			if (sec_status == SEC_E_INCOMPLETE_MESSAGE) {
+				/* Need more data */
+				return CURLE_AGAIN;
+			}
+			set_curl_err(h, "DecryptMessage failed: 0x%08lx", sec_status);
+			return CURLE_RECV_ERROR;
+		}
+		
+		/* Find the decrypted data buffer */
+		for (int i = 0; i < 4; i++) {
+			if (in_buffers[i].BufferType == SECBUFFER_DATA && in_buffers[i].cbBuffer > 0) {
+				size_t to_copy = (buflen < (size_t)in_buffers[i].cbBuffer) ? buflen : (size_t)in_buffers[i].cbBuffer;
+				memcpy(buffer, in_buffers[i].pvBuffer, to_copy);
+				*nread = to_copy;
+				
+				/* If there's more data than requested, save it in our buffer */
+				if ((size_t)in_buffers[i].cbBuffer > to_copy) {
+					size_t remaining = in_buffers[i].cbBuffer - to_copy;
+					if (remaining > h->schannel_stream_sizes.cbMaximumMessage) {
+						/* Reallocate if needed */
+						free(h->schannel_recv_buffer);
+						h->schannel_recv_buffer = (char*)malloc(remaining);
+						h->schannel_recv_buffer_len = remaining;
+					}
+					memcpy(h->schannel_recv_buffer, (char*)in_buffers[i].pvBuffer + to_copy, remaining);
+					h->schannel_recv_buffer_pos = 0;
+					h->schannel_recv_buffer_len = remaining;
+				}
+				break;
+			}
+		}
+		
+		free(recv_buf);
+		return CURLE_OK;
+	} else {
+		/* Plain TCP recv */
+		int recv_len = recv(h->sock, (char*)buffer, (int)buflen, 0);
+		if (recv_len == SOCKET_ERROR) {
+			int err = WSAGetLastError();
+			if (err == WSAEWOULDBLOCK) {
+				return CURLE_AGAIN;
+			}
+			set_curl_err(h, "recv failed: %d", err);
+			return CURLE_RECV_ERROR;
+		}
+		if (recv_len == 0) {
+			/* Connection closed */
+			return CURLE_OK;
+		}
+		*nread = recv_len;
+		return CURLE_OK;
+	}
 }
 
 extern "C" CURLcode curl_easy_perform(CURL *curl)
