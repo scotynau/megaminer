@@ -460,7 +460,9 @@ extern "C" unsigned char *SHA256(const unsigned char *d, size_t n, unsigned char
 
 /* =========================================================================
  * 1c. SHA-1 Implementation (for api.cpp WebSocket handshake)
+ * Only compile if OpenSSL SHA1_CTX not already defined
  * ========================================================================= */
+#ifndef SHA1_CTX
 
 #define SHA1_DIGEST_LENGTH 20
 #define SHA1_CBLOCK 64
@@ -624,6 +626,8 @@ extern "C" unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *
 	SHA1_Final(md, &ctx);
 	return md;
 }
+
+#endif /* SHA1_CTX */
 
 /* =========================================================================
  * 2. OpenSSL BIGNUM Compatibility Layer (for bignum.cpp / bignum_ssl10.hpp)
