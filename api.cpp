@@ -895,6 +895,7 @@ static int websocket_handshake(SOCKETTYPE c, char *result, char *clientkey)
 }
 
 /* TLS initialization */
+#ifndef WIN32
 static bool api_tls_init()
 {
 	if (!opt_api_tls_cert || !opt_api_tls_key) {
@@ -945,6 +946,15 @@ static bool api_tls_init()
 	applog(LOG_INFO, "API: TLS enabled (HTTPS/WSS)");
 	return true;
 }
+#else
+static bool api_tls_init()
+{
+	/* Windows: TLS handled by reverse proxy (nginx/Caddy) */
+	api_use_tls = false;
+	applog(LOG_INFO, "API: TLS disabled on Windows (use reverse proxy for HTTPS)");
+	return true;
+}
+#endif
 
 /* Rate limiting - token bucket */
 static bool rate_limit_check(in_addr_t ip)
@@ -1035,7 +1045,11 @@ static void rate_limit_get_headers(in_addr_t ip, char *headers, size_t headers_l
 }
 
 /* Send result with rate limit headers */
+#ifndef WIN32
 static int send_result_tls(SSL *ssl, SOCKETTYPE c, char *result, in_addr_t ip)
+#else
+static int send_result_tls(SOCKETTYPE c, char *result, in_addr_t ip)
+#endif
 {
 	char headers[256];
 	rate_limit_get_headers(ip, headers, sizeof(headers));
@@ -1044,6 +1058,7 @@ static int send_result_tls(SSL *ssl, SOCKETTYPE c, char *result, in_addr_t ip)
 	int result_len = result ? strlen(result) : 0;
 	int headers_len = strlen(headers);
 
+#ifndef WIN32
 	if (api_use_tls && ssl) {
 		/* HTTPS response with headers */
 		response = (char*) malloc(headers_len + result_len + 64);
@@ -1061,10 +1076,23 @@ static int send_result_tls(SSL *ssl, SOCKETTYPE c, char *result, in_addr_t ip)
 		free(response);
 		return n;
 	}
+#else
+	/* HTTP response with headers (Windows - no TLS) */
+	response = (char*) malloc(headers_len + result_len + 64);
+	if (!response) return -1;
+	sprintf(response, "HTTP/1.1 200 OK\r\n%sContent-Length: %d\r\n\r\n%s", headers, result_len, result ? result : "");
+	int n = send(c, response, strlen(response), 0);
+	free(response);
+	return n;
+#endif
 }
 
 /* Send 429 Too Many Requests */
+#ifndef WIN32
 static void send_429(SSL *ssl, SOCKETTYPE c, in_addr_t ip)
+#else
+static void send_429(SOCKETTYPE c, in_addr_t ip)
+#endif
 {
 	char headers[256];
 	rate_limit_get_headers(ip, headers, sizeof(headers));
@@ -1077,15 +1105,23 @@ static void send_429(SSL *ssl, SOCKETTYPE c, in_addr_t ip)
 		"Connection: close\r\n"
 		"\r\n", headers);
 
+#ifndef WIN32
 	if (api_use_tls && ssl) {
 		SSL_write(ssl, response, strlen(response));
 	} else {
 		send(c, response, strlen(response), 0);
 	}
+#else
+	send(c, response, strlen(response), 0);
+#endif
 }
 
 /* Send HTTP redirect to HTTPS */
+#ifndef WIN32
 static void send_redirect_https(SSL *ssl, SOCKETTYPE c, in_addr_t ip)
+#else
+static void send_redirect_https(SOCKETTYPE c, in_addr_t ip)
+#endif
 {
 	char headers[256];
 	rate_limit_get_headers(ip, headers, sizeof(headers));
@@ -1099,15 +1135,23 @@ static void send_redirect_https(SSL *ssl, SOCKETTYPE c, in_addr_t ip)
 		"Connection: close\r\n"
 		"\r\n", headers, opt_api_bind, opt_api_port);
 
+#ifndef WIN32
 	if (api_use_tls && ssl) {
 		SSL_write(ssl, response, strlen(response));
 	} else {
 		send(c, response, strlen(response), 0);
 	}
+#else
+	send(c, response, strlen(response), 0);
+#endif
 }
 
 /* WebSocket handshake with TLS support */
+#ifndef WIN32
 static int websocket_handshake_tls(SSL *ssl, SOCKETTYPE c, char *result, char *clientkey, in_addr_t ip)
+#else
+static int websocket_handshake_tls(SOCKETTYPE c, char *result, char *clientkey, in_addr_t ip)
+#endif
 {
 	char answer[256];
 	char inpkey[128] = { 0 };
@@ -1185,7 +1229,11 @@ static int websocket_handshake_tls(SSL *ssl, SOCKETTYPE c, char *result, char *c
 
 /* SSE (Server-Sent Events) endpoint for streaming stats */
 /* Returns text/event-stream with periodic miner stats */
+#ifndef WIN32
 static int sse_events_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
+#else
+static int sse_events_endpoint(SOCKETTYPE c, in_addr_t client_ip)
+#endif
 {
 	char headers[512];
 	char *response;
@@ -1200,11 +1248,15 @@ static int sse_events_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
 		"Access-Control-Allow-Origin: *\r\n"
 		"\r\n");
 
+#ifndef WIN32
 	if (api_use_tls && ssl) {
 		n = SSL_write(ssl, headers, strlen(headers));
 	} else {
 		n = send(c, headers, strlen(headers), 0);
 	}
+#else
+	n = send(c, headers, strlen(headers), 0);
+#endif
 	if (n <= 0)
 		return -1;
 
@@ -1218,11 +1270,15 @@ static int sse_events_endpoint(SSL *ssl, SOCKETTYPE c, in_addr_t client_ip)
 		event_len = snprintf(event_data, sizeof(event_data),
 			"event: stats\ndata: %s%s\n\n", summary, threads);
 
+#ifndef WIN32
 		if (api_use_tls && ssl) {
 			n = SSL_write(ssl, event_data, event_len);
 		} else {
 			n = send(c, event_data, event_len, 0);
 		}
+#else
+		n = send(c, event_data, event_len, 0);
+#endif
 
 		if (n <= 0)
 			break; /* client disconnected */
@@ -1804,10 +1860,12 @@ static void api()
 			CLOSESOCKET(*apisock);
 			free(apisock);
 			free(buffer);
+#ifndef WIN32
 			if (api_ssl_ctx) {
 				SSL_CTX_free(api_ssl_ctx);
 				api_ssl_ctx = NULL;
 			}
+#endif
 			return;
 		}
 
@@ -1817,7 +1875,11 @@ static void api()
 		if (!rate_limit_check(client_ip)) {
 			if (opt_debug)
 				applog(LOG_DEBUG, "API: rate limit exceeded for %s", inet_ntoa(cli.sin_addr));
+#ifndef WIN32
 			send_429(NULL, c, client_ip);
+#else
+			send_429(c, client_ip);
+#endif
 			CLOSESOCKET(c);
 			continue;
 		}
@@ -1830,8 +1892,13 @@ static void api()
 		if (addrok) {
 			bool fail;
 			char *wskey = NULL;
-			ssl = NULL;
+#ifndef WIN32
+			SSL *ssl = NULL;
+#else
+			void *ssl = NULL; /* unused on Windows */
+#endif
 
+#ifndef WIN32
 			/* Initialize TLS for this connection if enabled */
 			if (api_use_tls) {
 				ssl = SSL_new(api_ssl_ctx);
@@ -1855,6 +1922,10 @@ static void api()
 				/* Plain HTTP */
 				n = recv(c, &buf[0], SOCK_REC_BUFSZ, 0);
 			}
+#else
+			/* Windows: plain HTTP only (no TLS in API, use reverse proxy for TLS) */
+			n = recv(c, &buf[0], SOCK_REC_BUFSZ, 0);
+#endif
 
 			fail = (n <= 0);
 			if (fail)
@@ -1894,11 +1965,17 @@ static void api()
 				/* Handle SSE /events endpoint */
 				if (request_path && strcmp(request_path, "/events") == 0) {
 					if (request_path) free(request_path);
+#ifndef WIN32
 					sse_events_endpoint(ssl, c, client_ip);
+#else
+					sse_events_endpoint(c, client_ip);
+#endif
+#ifndef WIN32
 					if (ssl) {
 						SSL_shutdown(ssl);
 						SSL_free(ssl);
 					}
+#endif
 					CLOSESOCKET(c);
 					continue;
 				}
@@ -1906,11 +1983,17 @@ static void api()
 				/* Handle REST /health endpoint */
 				if (request_path && strcmp(request_path, "/health") == 0) {
 					if (request_path) free(request_path);
+#ifndef WIN32
 					api_health_endpoint(ssl, c, client_ip);
+#else
+					api_health_endpoint(c, client_ip);
+#endif
+#ifndef WIN32
 					if (ssl) {
 						SSL_shutdown(ssl);
 						SSL_free(ssl);
 					}
+#endif
 					CLOSESOCKET(c);
 					continue;
 				}
@@ -1918,11 +2001,17 @@ static void api()
 				/* Handle REST /metrics endpoint (Prometheus format) */
 				if (request_path && strcmp(request_path, "/metrics") == 0) {
 					if (request_path) free(request_path);
+#ifndef WIN32
 					api_metrics_endpoint(ssl, c, client_ip);
+#else
+					api_metrics_endpoint(c, client_ip);
+#endif
+#ifndef WIN32
 					if (ssl) {
 						SSL_shutdown(ssl);
 						SSL_free(ssl);
 					}
+#endif
 					CLOSESOCKET(c);
 					continue;
 				}
@@ -1937,16 +2026,22 @@ static void api()
 						"Connection: close\r\n"
 						"\r\n"
 						"{\"error\":\"WebSocket disabled (SHA-1 deprecated). Use REST API + SSE /events\"}");
+#ifndef WIN32
 					if (api_use_tls && ssl) {
 						SSL_write(ssl, response, strlen(response));
 					} else {
 						send(c, response, strlen(response), 0);
 					}
+#else
+					send(c, response, strlen(response), 0);
+#endif
 					if (request_path) free(request_path);
+#ifndef WIN32
 					if (ssl) {
 						SSL_shutdown(ssl);
 						SSL_free(ssl);
 					}
+#endif
 					CLOSESOCKET(c);
 					continue;
 				}
@@ -1966,19 +2061,29 @@ static void api()
 						}
 						result = (cmds[i].func)(params);
 						if (wskey) {
+#ifndef WIN32
 							websocket_handshake_tls(ssl, c, result, wskey, client_ip);
+#else
+							websocket_handshake_tls(c, result, wskey, client_ip);
+#endif
 							break;
 						}
+#ifndef WIN32
 						send_result_tls(ssl, c, result, client_ip);
+#else
+						send_result_tls(c, result, client_ip);
+#endif
 						break;
 					}
 				}
 				if (request_path) free(request_path);
 			}
+#ifndef WIN32
 			if (ssl) {
 				SSL_shutdown(ssl);
 				SSL_free(ssl);
 			}
+#endif
 			CLOSESOCKET(c);
 		}
 	}
@@ -1986,10 +2091,12 @@ static void api()
 	CLOSESOCKET(*apisock);
 	free(apisock);
 	free(buffer);
+#ifndef WIN32
 	if (api_ssl_ctx) {
 		SSL_CTX_free(api_ssl_ctx);
 		api_ssl_ctx = NULL;
 	}
+#endif
 }
 
 /* external access */
