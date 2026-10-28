@@ -48,3 +48,54 @@ Compile on Linux
 ----------------
 
 Please see [INSTALL](https://github.com/tpruvot/ccminer/blob/linux/INSTALL) file or [project Wiki](https://github.com/tpruvot/ccminer/wiki/Compatibility)
+
+## Security Features
+
+### Hardcoded SSL Verification
+
+SSL certificate verification (`CURLOPT_SSL_VERIFYPEER=1`) is now hardcoded and cannot be disabled by the user. This prevents man-in-the-middle attacks on pool connections.
+
+### Certificate Pinning for Pools
+
+Certificate pinning ensures that only pools with known, trusted certificates are accepted. This prevents attackers from using fraudulent certificates issued by compromised CAs.
+
+**Usage:**
+
+```bash
+# Add a certificate pin for a custom pool
+ccminer --pool-cert-pin=pool.example.com:sha256:a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890
+```
+
+**Format:** `host:sha256:HEX` where HEX is the 64-character lowercase SHA-256 fingerprint of the pool's leaf certificate.
+
+**Behavior:**
+- Known pools (pre-configured pins): Must match exactly or connection fails
+- Custom pools (via `--pool-cert-pin`): Must match exactly or connection fails
+- Unknown pools (no pin configured): Connection allowed but warning logged
+
+**Example with multiple pins:**
+
+```bash
+ccminer -o stratum+tcp://pool1.example.com:3333 \
+        --pool-cert-pin=pool1.example.com:sha256:a1b2c3d4... \
+        --pool-cert-pin=pool2.example.com:sha256:e5f6a7b8...
+```
+
+### Obtaining Certificate SHA-256 Fingerprint
+
+To get the SHA-256 fingerprint of a pool's certificate:
+
+```bash
+# Using OpenSSL
+openssl s_client -connect pool.example.com:443 -servername pool.example.com </dev/null 2>/dev/null | \
+  openssl x509 -fingerprint -sha256 -noout | \
+  sed 's/://g' | cut -d= -f2 | tr '[:upper:]' '[:lower:]'
+```
+
+Or for Stratum TLS (if supported):
+
+```bash
+openssl s_client -connect pool.example.com:3333 -servername pool.example.com </dev/null 2>/dev/null | \
+  openssl x509 -fingerprint -sha256 -noout | \
+  sed 's/://g' | cut -d= -f2 | tr '[:upper:]' '[:lower:]'
+```

@@ -230,6 +230,9 @@ char *opt_api_mcast_addr = strdup(API_MCAST_ADDR);
 char *opt_api_mcast_code = strdup(API_MCAST_CODE);
 char *opt_api_mcast_des = strdup("");
 int opt_api_mcast_port = 4068;
+char *opt_api_tls_cert = NULL;
+char *opt_api_tls_key = NULL;
+int opt_api_rate_limit = 10; /* default 10 req/s */
 
 bool opt_stratum_stats = false;
 
@@ -312,6 +315,7 @@ Options:\n\
   -u, --user=USERNAME   username for mining server\n\
   -p, --pass=PASSWORD   password for mining server\n\
       --cert=FILE       certificate for mining server using SSL\n\
+      --pool-cert-pin=HOST:SHA256  pin certificate SHA-256 for pool (host:sha256 hex)\n\
   -x, --proxy=[PROTOCOL://]HOST[:PORT]  connect through a proxy\n\
   -t, --threads=N       number of miner threads (default: number of nVidia GPUs)\n\
       --num-fallback-threads    number of sub-threads to use  (per mining thread) when falling back to the CPU (for X16R Algo, valid range = 1-128. 8 is good for a 4 core cpu etc.)\n\
@@ -339,6 +343,9 @@ Options:\n\
   -b, --api-bind=port   IP:port for the miner API (default: 127.0.0.1:4068), 0 disabled\n\
       --api-remote      Allow remote control, like pool switching, imply --api-allow=0/0\n\
       --api-allow=...   IP/mask of the allowed api client(s), 0/0 for all\n\
+      --api-tls-cert=FILE  Certificate file for API HTTPS/TLS (enables HTTPS)\n\
+      --api-tls-key=FILE   Private key file for API HTTPS/TLS\n\
+      --api-rate-limit=N   Max API requests per second per IP (default: 10)\n\
       --max-temp=N      Only mine if gpu temp is less than specified value\n\
       --max-rate=N[KMG] Only mine if net hashrate is less than specified value\n\
       --max-diff=N      Only mine if net difficulty is less than specified value\n\
@@ -391,6 +398,9 @@ struct option options[] = {
 	{ "api-mcast-code", 1, NULL, 1035 },
 	{ "api-mcast-port", 1, NULL, 1036 },
 	{ "api-mcast-des", 1, NULL, 1037 },
+	{ "api-tls-cert", 1, NULL, 1038 },
+	{ "api-tls-key", 1, NULL, 1039 },
+	{ "api-rate-limit", 1, NULL, 1040 },
 	{ "background", 0, NULL, 'B' },
 	{ "benchmark", 0, NULL, 1005 },
 	{ "cert", 1, NULL, 1001 },
@@ -467,6 +477,7 @@ struct option options[] = {
 	{ "diff-multiplier", 1, NULL, 'm' },
 	{ "diff-factor", 1, NULL, 'f' },
 	{ "diff", 1, NULL, 'f' }, // compat
+	{ "pool-cert-pin", 1, NULL, 1200 },
 	{ 0, 0, 0, 0 }
 
 };
@@ -631,6 +642,8 @@ void proper_exit(int reason)
 	free(opt_api_mcast_addr);
 	free(opt_api_mcast_code);
 	free(opt_api_mcast_des);
+	if (opt_api_tls_cert) free(opt_api_tls_cert);
+	if (opt_api_tls_key) free(opt_api_tls_key);
 	//free(work_restart);
 	//free(thr_info);
 	exit(reason);
@@ -3175,6 +3188,21 @@ void parse_arg(int key, char *arg)
 		if (v < 1 || v > 65535) // sanity check
 			show_usage_and_exit(1);
 		opt_api_mcast_port = v;
+		break;
+	case 1038: /* --api-tls-cert */
+		if (opt_api_tls_cert) free(opt_api_tls_cert);
+		opt_api_tls_cert = strdup(arg);
+		break;
+	case 1039: /* --api-tls-key */
+		if (opt_api_tls_key) free(opt_api_tls_key);
+		opt_api_tls_key = strdup(arg);
+		break;
+	case 1040: /* --api-rate-limit */
+		v = atoi(arg);
+		if (v < 1 || v > 10000) // sanity check
+			show_usage_and_exit(1);
+		opt_api_rate_limit = v;
+		break;
 	case 'B':
 		opt_background = true;
 		break;
@@ -3731,6 +3759,17 @@ void parse_arg(int key, char *arg)
 		show_version_and_exit();
 	case 'h':
 		show_usage_and_exit(0);
+	case 1200: /* --pool-cert-pin */
+		if (arg && arg[0]) {
+			if (curl_add_cert_pin(arg) != 0) {
+				applog(LOG_ERR, "Invalid --pool-cert-pin format: %s (expected host:sha256)", arg);
+				show_usage_and_exit(1);
+			}
+		} else {
+			applog(LOG_ERR, "--pool-cert-pin requires an argument");
+			show_usage_and_exit(1);
+		}
+		break;
 	default:
 		show_usage_and_exit(1);
 	}

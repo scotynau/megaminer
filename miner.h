@@ -643,6 +643,10 @@ void work_set_target(struct work* work, double diff);
 double target_to_diff(uint32_t* target);
 extern void get_currentalgo(char* buf, int sz);
 
+/* Certificate pinning for pools */
+extern "C" int curl_add_cert_pin(const char* pin_spec);
+extern "C" int curl_verify_cert_pin_stratum(const char* host, const unsigned char* cert_der, int cert_len);
+
 // bignum
 double bn_convert_nbits(const uint32_t nbits);
 void bn_nbits_to_uchar(const uint32_t nBits, uchar *target);

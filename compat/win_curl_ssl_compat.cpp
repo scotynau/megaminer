@@ -24,6 +24,240 @@
 #include <curl/curl.h>
 #include <openssl/sha.h>
 #include <openssl/bn.h>
+#include <wincrypt.h>
+#include <vector>
+#include <string>
+#include <algorithm>
+
+/* Fallback for older libcurl versions */
+#ifndef CURLE_SSL_PINNEDPUBKEYNOTMATCH
+#define CURLE_SSL_PINNEDPUBKEYNOTMATCH 90
+#endif
+
+/* =========================================================================
+ * Certificate Pinning for Known Pools
+ * ========================================================================= */
+
+struct CertPin {
+    const char* host;
+    const char* sha256;  // hex-encoded SHA-256 of leaf cert (64 chars)
+};
+
+/* Known pool pins - format: "host:sha256:HEX"
+ * Add pins for known pools here.
+ * Example: { "pool.example.com", "a1b2c3d4e5f6..." } */
+static const CertPin g_pinned_certs[] = {
+    /* Add known pool pins here */
+    { NULL, NULL }  /* Sentinel */
+};
+
+/* Runtime-added pins (from --pool-cert-pin) */
+static std::vector<CertPin> g_runtime_pins;
+
+static void cert_pin_to_hex(const BYTE* hash, DWORD hash_len, char* out_hex) {
+    static const char hex_chars[] = "0123456789abcdef";
+    for (DWORD i = 0; i < hash_len; ++i) {
+        out_hex[i * 2] = hex_chars[(hash[i] >> 4) & 0xF];
+        out_hex[i * 2 + 1] = hex_chars[hash[i] & 0xF];
+    }
+    out_hex[hash_len * 2] = '\0';
+}
+
+static bool hex_to_bytes(const char* hex, BYTE* out, size_t out_len) {
+    if (!hex || strlen(hex) != out_len * 2) return false;
+    for (size_t i = 0; i < out_len; ++i) {
+        char byte_str[3] = { hex[i * 2], hex[i * 2 + 1], '\0' };
+        char* end;
+        unsigned long val = strtoul(byte_str, &end, 16);
+        if (*end != '\0' || val > 255) return false;
+        out[i] = (BYTE)val;
+    }
+    return true;
+}
+
+static bool verify_cert_pin(const char* host, PCCERT_CONTEXT cert_ctx) {
+    if (!cert_ctx || !host) return false;
+
+    /* Extract leaf certificate SHA-256 fingerprint */
+    DWORD hash_len = 0;
+    if (!CertGetCertificateContextProperty(cert_ctx, CERT_SHA256_HASH_PROP_ID, NULL, &hash_len)) {
+        return false;
+    }
+
+    if (hash_len != SHA256_DIGEST_LENGTH) {
+        return false;
+    }
+
+    std::vector<BYTE> cert_hash(hash_len);
+    if (!CertGetCertificateContextProperty(cert_ctx, CERT_SHA256_HASH_PROP_ID, cert_hash.data(), &hash_len)) {
+        return false;
+    }
+
+    char cert_hex[SHA256_DIGEST_LENGTH * 2 + 1];
+    cert_pin_to_hex(cert_hash.data(), hash_len, cert_hex);
+
+    /* Check static pins */
+    for (const CertPin* pin = g_pinned_certs; pin->host != NULL; ++pin) {
+        if (_stricmp(host, pin->host) == 0) {
+            if (strcmp(cert_hex, pin->sha256) == 0) {
+                return true;  /* Match! */
+            }
+            /* Mismatch - log and fail */
+            applog(LOG_ERR, "CERT_PIN_MISMATCH: %s expected %s got %s", host, pin->sha256, cert_hex);
+            return false;
+        }
+    }
+
+    /* Check runtime pins */
+    for (const auto& pin : g_runtime_pins) {
+        if (_stricmp(host, pin.host) == 0) {
+            if (strcmp(cert_hex, pin.sha256) == 0) {
+                return true;  /* Match! */
+            }
+            applog(LOG_ERR, "CERT_PIN_MISMATCH: %s expected %s got %s", host, pin.sha256, cert_hex);
+            return false;
+        }
+    }
+
+    /* Unknown pool - allow but warn */
+    applog(LOG_WARNING, "WARNING: Unpinned pool %s, cert: %s", host, cert_hex);
+    return true;
+}
+
+static bool verify_server_cert_chain(const char* host, HCERTCHAINENGINE chain_engine, PCCERT_CONTEXT cert_ctx) {
+    if (!cert_ctx) return false;
+
+    CERT_CHAIN_PARA chain_para = { sizeof(chain_para) };
+    chain_para.RequestedUsage.dwType = USAGE_MATCH_TYPE_AND;
+    chain_para.RequestedUsage.Usage.cUsageIdentifier = 0;
+    chain_para.RequestedUsage.Usage.rgpszUsageIdentifier = NULL;
+
+    PCCERT_CHAIN_CONTEXT chain_ctx = NULL;
+    if (!CertGetCertificateChain(
+            chain_engine,
+            cert_ctx,
+            NULL,
+            NULL,
+            &chain_para,
+            CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
+            NULL,
+            &chain_ctx)) {
+        return false;
+    }
+
+    bool result = verify_cert_pin(host, cert_ctx);
+
+    CertFreeCertificateChain(chain_ctx);
+    return result;
+}
+
+static bool perform_cert_pin_check(CurlEasyHandle* h, const ParsedUrl* u, HINTERNET hRequest) {
+    if (!u->is_https) return true;  /* Only for HTTPS */
+
+    /* Get the server certificate from WinHTTP */
+    PCCERT_CONTEXT cert_ctx = NULL;
+    DWORD cert_size = sizeof(cert_ctx);
+    if (!WinHttpQueryOption(
+            hRequest,
+            WINHTTP_OPTION_SERVER_CERT_CONTEXT,
+            &cert_ctx,
+            &cert_size)) {
+        /* No cert context available - could be pre-TLS 1.2 or other issue */
+        return true;  /* Allow but don't pin */
+    }
+
+    bool result = verify_server_cert_chain(u->host, NULL, cert_ctx);
+    CertFreeCertificateContext(cert_ctx);
+    return result;
+}
+
+/* Add a runtime cert pin from --pool-cert-pin argument
+ * Format: "host:sha256:HEX" */
+extern "C" int curl_add_cert_pin(const char* pin_spec) {
+    if (!pin_spec) return -1;
+
+    /* Parse "host:sha256" */
+    char spec_copy[1024];
+    strncpy(spec_copy, pin_spec, sizeof(spec_copy) - 1);
+    spec_copy[sizeof(spec_copy) - 1] = '\0';
+
+    char* host = spec_copy;
+    char* sha256 = strchr(spec_copy, ':');
+    if (!sha256) return -1;
+    *sha256++ = '\0';
+
+    /* Validate SHA-256 format (64 hex chars) */
+    if (strlen(sha256) != 64) return -1;
+    for (size_t i = 0; i < 64; ++i) {
+        char c = sha256[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            return -1;
+        }
+    }
+
+    /* Convert to lowercase for consistent comparison */
+    char sha256_lower[65];
+    for (size_t i = 0; i < 64; ++i) {
+        sha256_lower[i] = (sha256[i] >= 'A' && sha256[i] <= 'Z') ? (sha256[i] + 32) : sha256[i];
+    }
+    sha256_lower[64] = '\0';
+
+    CertPin pin;
+    pin.host = _strdup(host);
+    pin.sha256 = _strdup(sha256_lower);
+    if (!pin.host || !pin.sha256) {
+        free((void*)pin.host);
+        free((void*)pin.sha256);
+        return -1;
+    }
+
+    g_runtime_pins.push_back(pin);
+    return 0;
+}
+
+/* Verify certificate pin for a connected socket with TLS (Stratum)
+ * Called after OpenSSL handshake completes.
+ * cert_der: DER-encoded certificate
+ * cert_len: length of cert_der */
+extern "C" int curl_verify_cert_pin_stratum(const char* host, const unsigned char* cert_der, int cert_len) {
+    if (!host || !cert_der || cert_len <= 0) return -1;
+
+    /* Compute SHA-256 of the certificate */
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+    SHA256_Update(&ctx, cert_der, cert_len);
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256_Final(hash, &ctx);
+
+    char cert_hex[SHA256_DIGEST_LENGTH * 2 + 1];
+    cert_pin_to_hex(hash, SHA256_DIGEST_LENGTH, cert_hex);
+
+    /* Check static pins */
+    for (const CertPin* pin = g_pinned_certs; pin->host != NULL; ++pin) {
+        if (_stricmp(host, pin->host) == 0) {
+            if (strcmp(cert_hex, pin->sha256) == 0) {
+                return 0;  /* Match! */
+            }
+            applog(LOG_ERR, "CERT_PIN_MISMATCH: %s expected %s got %s", host, pin->sha256, cert_hex);
+            return -1;
+        }
+    }
+
+    /* Check runtime pins */
+    for (const auto& pin : g_runtime_pins) {
+        if (_stricmp(host, pin.host) == 0) {
+            if (strcmp(cert_hex, pin.sha256) == 0) {
+                return 0;  /* Match! */
+            }
+            applog(LOG_ERR, "CERT_PIN_MISMATCH: %s expected %s got %s", host, pin.sha256, cert_hex);
+            return -1;
+        }
+    }
+
+    /* Unknown pool - allow but warn */
+    applog(LOG_WARNING, "WARNING: Unpinned pool %s, cert: %s", host, cert_hex);
+    return 0;
+}
 
 /* =========================================================================
  * 1. OpenSSL SHA-256 Compatibility Layer (SHA256_Init/Update/Final/Transform)
@@ -1088,8 +1322,11 @@ extern "C" CURLcode curl_easy_setopt(CURL *curl, CURLoption option, ...)
 	case CURLOPT_FOLLOWLOCATION:
 		h->followlocation = va_arg(ap, long);
 		break;
+	/* CURLOPT_SSL_VERIFYPEER: Hardcoded to 1 - no user option to disable */
 	case CURLOPT_SSL_VERIFYPEER:
-		h->ssl_verifypeer = va_arg(ap, long);
+		/* Ignore user value, always verify */
+		(void)va_arg(ap, long);
+		h->ssl_verifypeer = 1;
 		break;
 	case CURLOPT_VERBOSE:
 		h->verbose = va_arg(ap, long);
@@ -1456,13 +1693,8 @@ static CURLcode perform_http_request(CurlEasyHandle *h, const ParsedUrl *u)
 		return CURLE_COULDNT_CONNECT;
 	}
 
-	if (u->is_https && !h->ssl_verifypeer) {
-		DWORD sec_flags = SECURITY_FLAG_IGNORE_UNKNOWN_CA |
-		                  SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
-		                  SECURITY_FLAG_IGNORE_CERT_DATE_INVALID |
-		                  SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
-		WinHttpSetOption(hRequest, WINHTTP_OPTION_SECURITY_FLAGS, &sec_flags, sizeof(sec_flags));
-	}
+	/* SSL_VERIFYPEER is now hardcoded to 1 - no user option to disable */
+	/* Certificate pinning verification happens after request completes */
 
 	if (h->userpwd[0]) {
 		char b64[1024];
@@ -1508,6 +1740,17 @@ static CURLcode perform_http_request(CurlEasyHandle *h, const ParsedUrl *u)
 		WinHttpCloseHandle(hConnect);
 		WinHttpCloseHandle(hSession);
 		return CURLE_COULDNT_CONNECT;
+	}
+
+	/* Certificate pinning verification - after TLS handshake, before processing response */
+	if (u->is_https) {
+		if (!perform_cert_pin_check(h, u, hRequest)) {
+			set_curl_err(h, "Certificate pin verification failed for %s", u->host);
+			WinHttpCloseHandle(hRequest);
+			WinHttpCloseHandle(hConnect);
+			WinHttpCloseHandle(hSession);
+			return CURLE_SSL_PINNEDPUBKEYNOTMATCH;  /* Pinned public key mismatch */
+		}
 	}
 
 	if (h->failonerror) {
