@@ -8,8 +8,8 @@
 
 #define ROTR(x,n) ROTR64(x,n)
 
-// use sp kernel on SM 5+
-// #define SP_KERNEL  // Disabled: SP kernel uses custom Blake512, use non-SP with exact SPH
+// Force disable SP_KERNEL to use exact SPH Blake512 for consensus
+#undef SP_KERNEL
 
 #define USE_SHUFFLE 0
 
@@ -128,7 +128,12 @@ void quark_blake512_gpu_hash_80(uint32_t threads, uint32_t startNounce, void *ou
             buf[i] = c_PaddedMessage80[i];
 
         // The test Nonce - already declared above
-        ((uint32_t*)buf)[19] = cuda_swab32(nounce);
+        // Replace nonce in the message (bytes 76-79 of 80-byte header = message[9] bytes 4-7)
+        // message[9] contains bytes 72-79 of header (nonce at bytes 76-79 = last 4 bytes of message[9])
+        // In big-endian message[9], nonce is at lowest 32 bits
+        uint64_t msg9 = buf[9];
+        msg9 = (msg9 & 0xFFFFFFFF00000000ULL) | cuda_swab32(nounce);
+        buf[9] = msg9;
 
         // Use exact SPH Blake512 compress
         uint64_t S[4] = {0, 0, 0, 0};
@@ -229,104 +234,24 @@ void quark_blake512_cpu_setBlock_80(int thr_id, uint32_t *endiandata)
         uint64_t message[16];
         uint32_t *pdata = endiandata;
 
-        // Copy 80-byte header (10 x uint64_t) with byte-swap for endianness
-        for (int i = 0; i < 10; i++)
-            message[i] = cuda_swab64(((uint64_t*)endiandata)[i]);
+        // Header is already big-endian (network order) from stratum
+        // SPH Blake512 expects big-endian input - copy as-is without byte-swap
+        for (int i = 0; i < 10; i++) {
+            // pdata is uint32_t*, so pdata[i] is 4 bytes
+            // message[i] = pdata[2*i] << 32 | pdata[2*i+1] (big-endian combine)
+            message[i] = ((uint64_t)pdata[2*i] << 32) | pdata[2*i+1];
+        }
 
-        // Blake512 padding: 1 bit '1', zeros, 128-bit big-endian length (640 bits = 0x280)
-        // message[10] = 0x8000000000000000 (1 bit at MSB of first padding byte)
-        // message[11-14] = 0
-        // message[15] = 640 as 128-bit big-endian = 0x0000000000000280 (split across 2 uint64_t)
-        // Since we only have message[10-15] = 6 slots = 48 bytes, but need 16 bytes for 128-bit length...
-        // Actually Blake512 uses 128-byte blocks. 80 bytes data + 1 bit + zeros + 16 bytes length = 128 bytes
-        // So we need 48 bytes of padding + 16 bytes length = 64 bytes = 4 uint64_t
-        // message[10] = 0x8000000000000000 (first padding byte = 0x80)
-        // message[11] = message[12] = message[13] = 0 (24 bytes zeros)
-        // message[14] = 0 (high 64 bits of 128-bit length = 0)
-        // message[15] = 640 as big-endian 64-bit = 0x0000000000000280 (but byte-swapped for network order)
-        
-        // Actually, the SPH Blake512 expects the 128-bit length as TWO uint64_t in BIG-ENDIAN:
-        // High 64 bits (bits 127-64) = 0, Low 64 bits (bits 63-0) = 640 (0x280)
-        // But stored in memory as big-endian bytes, so when loaded as uint64_t array:
-        // message[14] = 0 (high 64 bits of 128-bit length)
-        // message[15] = 640 << 56? No...
-        
-        // Let's think: 128-bit length = 640 = 0x00000000000000000000000000000280
-        // As big-endian bytes: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 80
-        // As uint64_t[2] in memory (big-endian): [0x0000000000000000, 0x0000000000000280]
-        // But cudaMemcpyToSymbol copies raw bytes, so we need to arrange the uint64_t correctly
-        
-        // The padding bytes (after 80 bytes data):
-        // byte 80: 0x80
-        // bytes 81-111: zeros (31 bytes)
-        // bytes 112-127: 128-bit length = 640 big-endian
-        
-        // In uint64_t array (8 bytes each):
-        // message[10] = bytes 80-87:  0x80 00 00 00 00 00 00 00  (big-endian = 0x8000000000000000)
-        // message[11] = bytes 88-95:  00 00 00 00 00 00 00 00
-        // message[12] = bytes 96-103: 00 00 00 00 00 00 00 00
-        // message[13] = bytes 104-111:00 00 00 00 00 00 00 00
-        // message[14] = bytes 112-119:00 00 00 00 00 00 00 00 (high 64 of length)
-        // message[15] = bytes 120-127:00 00 00 00 00 00 02 80 (low 64 of length = 640 big-endian)
-        
-        message[10] = 0x8000000000000000ULL;  // padding start: 1 bit
+        // Blake512 padding: 1 bit '1', zeros, 128-bit length (640 bits = 0x280) big-endian
+        // message[10] = 0x8000000000000000 (padding byte 0x80 at MSB)
+        // message[11-14] = 0 (48 bytes zeros)
+        // message[15] = 640 = 0x280 (last 16 bytes = 128-bit length, big-endian)
+        message[10] = 0x8000000000000000ULL;
         message[11] = 0;
         message[12] = 0;
         message[13] = 0;
         message[14] = 0;                       // high 64 bits of 128-bit length = 0
-        message[15] = 0x0000000000000280ULL;  // low 64 bits = 640 in BIG-ENDIAN byte order
-        // Note: 0x0000000000000280 as uint64_t in host memory (little-endian machine)
-        // represents the bytes 80 02 00 00 00 00 00 00 in memory
-        // But the GPU expects big-endian byte order for the length field!
-        
-        // Wait - the GPU will load these as uint64_t from constant memory.
-        // The SPH compress function does byte-swap on each uint64_t.
-        // So we need the bytes in memory to match what SPH expects after byte-swap.
-        
-        // SPH's COMPRESS64 does: M[i] = be64_to_cpu(block[i])
-        // So block[i] should be in BIG-ENDIAN byte order in memory.
-        // Our message[] array will be copied to device as raw bytes.
-        // The GPU will read as uint64_t and then byte-swap (cuda_swab64).
-        // So we need message[] in HOST byte order (little-endian) such that
-        // after cuda_swab64 on GPU, it matches SPH's expected big-endian values.
-        
-        // For the length field: SPH expects M[14]=0, M[15]=0x280 (after be64_to_cpu)
-        // cuda_swab64 on GPU will reverse bytes, so we need to store PRE-SWAPPED values:
-        // M[14] after swap = 0 => store 0
-        // M[15] after swap = 0x280 => store 0x280 << 56? No, cuda_swab64 reverses bytes.
-        // 0x0000000000000280 byte-swapped = 0x8002000000000000
-        // So store 0x8002000000000000 for M[15] to get 0x280 after swap.
-        
-        // Actually wait - the host copies message[] directly to device symbol.
-        // The GPU kernel reads block[i] and does cuda_swab64(block[i]) to get M[i].
-        // So we need: cuda_swab64(message[i]) == expected_M[i] (SPH's big-endian M)
-        
-        // For padding: SPH expects M[10] = 0x8000000000000000 (0x80 + zeros)
-        // So message[10] = cuda_swab64(0x8000000000000000) = 0x0000000000000080
-        // For length: SPH expects M[14]=0, M[15]=0x0000000000000280
-        // message[14] = cuda_swab64(0) = 0
-        // message[15] = cuda_swab64(0x0000000000000280) = 0x8002000000000000
-        
-        // But wait - the host already does cuda_swab64 on pdata[i] for the header!
-        // So for consistency, we should pre-swap the padding too.
-        
-        // Simpler approach: construct the 128-byte block in correct big-endian format,
-        // then byte-swap each uint64_t before copying to device.
-        
-        uint8_t padded_block[128];
-        memcpy(padded_block, endiandata, 80);  // 80-byte header (already big-endian from network)
-        padded_block[80] = 0x80;  // 1 bit
-        memset(padded_block + 81, 0, 31);  // 31 bytes zeros (81-111)
-        // 128-bit length = 640 at bytes 112-127 (big-endian)
-        padded_block[126] = 0x02;
-        padded_block[127] = 0x80;
-        // bytes 112-125 are 0 (already zero from memset)
-        
-        // Now byte-swap each uint64_t and copy to message
-        uint64_t *padded64 = (uint64_t*)padded_block;
-        for (int i = 0; i < 16; i++) {
-            message[i] = cuda_swab64(padded64[i]);
-        }
+        message[15] = 0x0000000000000280ULL;  // low 64 bits = 640 big-endian
 
         cudaMemcpyToSymbol(c_PaddedMessage80, message, sizeof(message), 0, cudaMemcpyHostToDevice);
     }
