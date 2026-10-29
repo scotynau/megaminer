@@ -137,7 +137,7 @@ void quark_blake512_gpu_hash_80(uint32_t threads, uint32_t startNounce, void *ou
 
         // Use exact SPH Blake512 compress
         uint64_t S[4] = {0, 0, 0, 0};
-        uint64_t T0 = 512, T1 = 0;
+        uint64_t T0 = 0, T1 = 0;
         sph_blake512_compress_exact(h, buf, S[0], S[1], S[2], S[3], T0, T1);
 
 #if __CUDA_ARCH__ <= 350
