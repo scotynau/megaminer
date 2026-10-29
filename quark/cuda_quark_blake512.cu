@@ -234,25 +234,25 @@ void quark_blake512_cpu_setBlock_80(int thr_id, uint32_t *endiandata)
         uint64_t message[16];
         uint32_t *pdata = endiandata;
 
-        // Header is already big-endian (network order) from stratum
-        // SPH Blake512 expects big-endian input - copy as-is without byte-swap
+        // Header is big-endian from stratum. GPU kernel byte-swaps each uint64_t word
+        // (sph_blake512_compress_exact does sph_dec64be_aligned equivalent).
+        // Host must pre-byte-swap so kernel's byte-swap recovers big-endian.
         for (int i = 0; i < 10; i++) {
-            // pdata is uint32_t*, so pdata[i] is 4 bytes
-            // message[i] = pdata[2*i] << 32 | pdata[2*i+1] (big-endian combine)
-            message[i] = ((uint64_t)pdata[2*i] << 32) | pdata[2*i+1];
+            uint64_t be_word = ((uint64_t)pdata[2*i] << 32) | pdata[2*i+1];
+            message[i] = cuda_swab64(be_word);
         }
 
-        // Blake512 padding: 1 bit '1', zeros, 128-bit length (640 bits = 0x280) big-endian
-        // message[10] = 0x8000000000000000 (padding byte 0x80 at MSB)
-        // message[11-14] = 0 (48 bytes zeros)
-        // message[15] = 640 as BIG-ENDIAN 64-bit = byte-swapped 640 = 0x8002000000000000
-        // SPH's sph_dec64be_aligned expects big-endian bytes in memory
-        message[10] = 0x8000000000000000ULL;
-        message[11] = 0;
-        message[12] = 0;
-        message[13] = 0;
-        message[14] = 0;                       // high 64 bits of 128-bit length = 0
-        message[15] = 0x8002000000000000ULL;  // low 64 bits = 640 in BIG-ENDIAN byte order (byte-swapped 640)
+        // Blake512 padding per SPH blake64_close for first block (ptr=0, n=0, 80 bytes = 640 bits):
+        // SPH sets sc->T0 = 0xFFFFFFFFFFFFFC00, sc->T1 = 0xFFFFFFFFFFFFFFFF
+        // Writes to padding: th = T1 = 0xFFFFFFFFFFFFFFFF, tl = T0 + 640 = 0xFFFFFFFFFFFFFE80
+        // Then blake64 increments T0 by 1024 -> T0=0, T1=0 for compression.
+        // Kernel uses T0=0, T1=0. Padding in constant memory must match SPH's bytes 112-127.
+        message[10] = cuda_swab64(0x8000000000000000ULL);  // 0x80 at byte 80
+        message[11] = cuda_swab64(0x0000000000000000ULL);  // zeros
+        message[12] = cuda_swab64(0x0000000000000000ULL);
+        message[13] = cuda_swab64(0x0000000000000000ULL);
+        message[14] = cuda_swab64(0xFFFFFFFFFFFFFFFFULL);  // T1 = -1
+        message[15] = cuda_swab64(0xFFFFFFFFFFFFFE80ULL);  // T0+640 = -384
 
         cudaMemcpyToSymbol(c_PaddedMessage80, message, sizeof(message), 0, cudaMemcpyHostToDevice);
     }
