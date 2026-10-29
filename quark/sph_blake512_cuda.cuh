@@ -20,11 +20,16 @@ __device__ __constant__ uint64_t c_IV512[8] = {
     0x1F83D9ABFB41BD6BULL, 0x5BE0CD19137E2179ULL
 };
 
-__device__ __constant__ uint64_t c_CB[8] = {
+// CB constants for key schedule - EXACTLY 16 elements from SPH's u512 (for non-compact ROUND_B)
+__device__ __constant__ uint64_t c_CB[16] = {
     0x243f6a8885a308d3ULL, 0x13198a2e03707344ULL,
     0xa4093822299f31d0ULL, 0x082efa98ec4e6c89ULL,
     0x452821e638d01377ULL, 0xbe5466cf34e90c6cULL,
-    0xc0ac29b7c97c50ddULL, 0x3f84d5b5b5470917ULL
+    0xc0ac29b7c97c50ddULL, 0x3f84d5b5b5470917ULL,
+    0x9216d5d98979fb1bULL, 0xd1310ba698dfb5acULL,
+    0x2ffd72dbd01adfb7ULL, 0xb8e1afed6a267e96ULL,
+    0xba7c9045f12c7f99ULL, 0x24a19947b3916cf7ULL,
+    0x0801f2e2858efc16ULL, 0x636920d871574e69ULL
 };
 
 __device__ __constant__ unsigned char c_sigma[16][16] = {
@@ -54,11 +59,15 @@ static const uint64_t IV512_HOST[8] = {
     0x1F83D9ABFB41BD6BULL, 0x5BE0CD19137E2179ULL
 };
 
-static const uint64_t CB_HOST[8] = {
+static const uint64_t CB_HOST[16] = {
     0x243f6a8885a308d3ULL, 0x13198a2e03707344ULL,
     0xa4093822299f31d0ULL, 0x082efa98ec4e6c89ULL,
     0x452821e638d01377ULL, 0xbe5466cf34e90c6cULL,
-    0xc0ac29b7c97c50ddULL, 0x3f84d5b5b5470917ULL
+    0xc0ac29b7c97c50ddULL, 0x3f84d5b5b5470917ULL,
+    0x9216d5d98979fb1bULL, 0xd1310ba698dfb5acULL,
+    0x2ffd72dbd01adfb7ULL, 0xb8e1afed6a267e96ULL,
+    0xba7c9045f12c7f99ULL, 0x24a19947b3916cf7ULL,
+    0x0801f2e2858efc16ULL, 0x636920d871574e69ULL
 };
 
 static const unsigned char sigma_HOST[16][16] = {
