@@ -8,7 +8,7 @@
  * any later version.  See COPYING for more details.
  */
 
-#include "miner.h"
+#include "sph_compat.h"
 
 #include <string.h>
 #include <inttypes.h>
