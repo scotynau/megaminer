@@ -245,13 +245,14 @@ void quark_blake512_cpu_setBlock_80(int thr_id, uint32_t *endiandata)
         // Blake512 padding: 1 bit '1', zeros, 128-bit length (640 bits = 0x280) big-endian
         // message[10] = 0x8000000000000000 (padding byte 0x80 at MSB)
         // message[11-14] = 0 (48 bytes zeros)
-        // message[15] = 640 = 0x280 (last 16 bytes = 128-bit length, big-endian)
+        // message[15] = 640 as BIG-ENDIAN 64-bit = byte-swapped 640 = 0x8002000000000000
+        // SPH's sph_dec64be_aligned expects big-endian bytes in memory
         message[10] = 0x8000000000000000ULL;
         message[11] = 0;
         message[12] = 0;
         message[13] = 0;
         message[14] = 0;                       // high 64 bits of 128-bit length = 0
-        message[15] = 0x0000000000000280ULL;  // low 64 bits = 640 big-endian
+        message[15] = 0x8002000000000000ULL;  // low 64 bits = 640 in BIG-ENDIAN byte order (byte-swapped 640)
 
         cudaMemcpyToSymbol(c_PaddedMessage80, message, sizeof(message), 0, cudaMemcpyHostToDevice);
     }
